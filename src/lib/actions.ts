@@ -16,6 +16,21 @@ function openPayments(store: Store) {
   return (monthOrNew(store, p.ym).plan[p.key] || []).filter((r) => !r.paid);
 }
 
+/** Дата в виде YYYY-MM-DD из того, что вернула нейросеть: «2027-7-2», «02.07.2027», «02.07» (ближайшая будущая). */
+export function normDate(v: unknown, today = todayIso()): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?$/);
+  if (!m) return null;
+  const mm = m[2].padStart(2, '0'), dd = m[1].padStart(2, '0');
+  if (m[3]) return `${m[3]}-${mm}-${dd}`;
+  const y = Number(today.slice(0, 4));
+  const cand = `${y}-${mm}-${dd}`;
+  return cand >= today ? cand : `${y + 1}-${mm}-${dd}`;
+}
+
 /** Подпись записи для сообщений: название дела, трата, платёж или пункт здоровья. */
 export function parsedLabel(p: Parsed): string {
   return p.type === 'health' ? 'отметка здоровья' : p.type === 'paid' ? p.name : p.type === 'expense' || p.type === 'income' ? p.what
@@ -33,7 +48,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const from = iso(addDays(new Date(), -7)), to = iso(addDays(new Date(), 120));
   const evs = [...new Map(calendar.filter((e) => e.day >= from && e.day <= to).map((e) => [e.id, e])).values()].slice(0, 150);
   const openTasks = store.items.filter((t) => t.kind === 'task' && !t.done).slice(-120);
-  const res = await callFn<{ items: Parsed[] }>('assistant', {
+  const res = await callFn<{ items: Parsed[]; raw?: string }>('assistant', {
     text: preferArea ? `${text}\n\n(Записано внутри сферы «${areas.find((a) => a.id === preferArea)?.name}» — если не сказано иное, клади туда.)` : text,
     today: todayIso(), weekday: WD_FULL[d.getDay()],
     areas: ordered.map((a) => ({ id: a.id, name: a.name, keywords: a.keywords, projects: projects.filter((p) => p.area_id === a.id && !p.done).map((p) => ({ id: p.id, name: p.name, status: PROJECT_STATUS[p.status ?? 'active'].name })) })),
@@ -46,7 +61,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, date: t.due_date })),
   });
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
-  const okD = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const okD = (v: unknown) => normDate(v);
   // Траты и доходы не бывают в будущем: если нейросеть перенесла на них дату события — ставим сегодня.
   const okS = (v: unknown) => (typeof v === 'string' && v in PROJECT_STATUS ? (v as ProjectStatus) : null);
   const pastD = (v: unknown) => { const x = okD(v); return x && x <= todayIso() ? x : null; };
@@ -57,6 +72,10 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const out: Parsed[] = [];
   for (const raw of res.items as Record<string, unknown>[]) {
     if (!raw || typeof raw !== 'object') continue;
+    // Нейросеть иногда пишет название в другом поле или придумывает свой тип — приводим к нашему.
+    if (!raw.title && (raw.name || raw.text)) raw.title = raw.name || raw.text;
+    if (raw.type === 'birthday') { raw.type = 'event'; raw.repeat ??= 'YEARLY'; }
+    if (raw.type === 'event' && !raw.date && raw.start && okD(raw.start)) { raw.date = raw.start; raw.start = null; }
     const t = raw.type;
     if ((t === 'task' || t === 'note' || t === 'wish') && !raw.title) continue;
     if (t === 'task') out.push({ type: 'task', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date), time: okT(raw.time), calendar: !!raw.calendar, people: ppl(raw.people), remind: (raw.remind as string) ?? null });
@@ -95,6 +114,10 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
       const h = health.find((x) => x.id === raw.item_id);
       if (h) out.push({ type: 'health', item_id: h.id, value: Math.max(1, Math.round(Number(raw.value) || 1)) });
     }
+  }
+  if (!out.length && (res.items.length || res.raw)) {
+    // Чтобы было понятно, что пошло не так, показываем начало ответа нейросети.
+    throw new Error(`Нейросеть ответила непонятно, ничего не записала. Пришли этот текст в чат: ${(res.raw || JSON.stringify(res.items)).slice(0, 300)}`);
   }
   return out;
 }

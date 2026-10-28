@@ -76,3 +76,14 @@ describe('нарезка записи', () => {
     expect(parts.flat().length).toBe(300);
   });
 });
+
+import { normDate } from '../src/lib/actions';
+describe('даты от нейросети', () => {
+  it('понимает разные записи', () => {
+    expect(normDate('2027-7-2')).toBe('2027-07-02');
+    expect(normDate('02.07.2027')).toBe('2027-07-02');
+    expect(normDate('2.7', '2026-10-28')).toBe('2027-07-02');
+    expect(normDate('25.12', '2026-10-28')).toBe('2026-12-25');
+    expect(normDate('завтра')).toBe(null);
+  });
+});

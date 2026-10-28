@@ -68,10 +68,13 @@ ${health}
 - Формулируй коротко и по-деловому, сохраняя имена и цифры. Исправь явные ошибки распознавания речи: повторы слов («исправь исправь»), оговорки («20 29 декабря» — это 29 декабря), похожие по звучанию слова. Ничего не выдумывай.
 - Относительные даты («завтра», «в пятницу», «к среде», «до 9.11») переводи в YYYY-MM-DD, ближайшую будущую. Время — HH:MM.
 - Слова «поставь в календарь», «напомни», «повторять» не включай в название — переводи в поля.
-- День рождения — event на весь день, repeat YEARLY, если не сказано иное.
+- День рождения — event на весь день (start null), repeat YEARLY, название «🎂 День рождения: Имя». Если перечислено несколько дней рождения — отдельная запись на каждого. Дата — ближайшая будущая, полностью YYYY-MM-DD.
 - «Мне и Мите» → people: [id Мити]. «Всей семье» → все люди.
 - Отпускные по умолчанию target "reserve" (их откладывают на будущие платежи). Если сказано «отложить на …» про желание — target "wish". Иначе target "live".
 - remind: "hour" | "day" | "week" | null. repeat: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY" | null.
+
+Пример. Текст: «поставь с ежегодным повторением дни рождения мама 2 июля сестра Анюта 2 августа».
+Ответ: {"items":[{"type":"event","title":"🎂 День рождения: мама","area_id":"<id Дней рождения или Семьи>","project_id":null,"date":"<ближайшее 2 июля>","start":null,"end":null,"repeat":"YEARLY","remind":"day","people":[]},{"type":"event","title":"🎂 День рождения: сестра Анюта","area_id":"<тот же id>","project_id":null,"date":"<ближайшее 2 августа>","start":null,"end":null,"repeat":"YEARLY","remind":"day","people":[]}]}
 
 Пример. Текст: «завтра в 10 стоматолог, напомни за час, и такси сегодня было 342».
 Ответ: {"items":[{"type":"event","title":"Стоматолог","area_id":"<id Здоровья>","project_id":null,"date":"<завтра>","start":"10:00","end":null,"repeat":null,"remind":"hour","people":[]},{"type":"expense","what":"Такси","amount":342,"category":"Транспорт","wb":false,"date":null}]}
@@ -140,6 +143,12 @@ Deno.serve(handle(async (req) => {
   const provider = (Deno.env.get('AI_PROVIDER') || (Deno.env.get('YANDEX_API_KEY') ? 'yandex' : 'claude')).toLowerCase();
   const system = systemPrompt(ctx);
   const raw = provider === 'claude' ? await askClaude(system, ctx.text) : await askYandex(system, ctx.text);
-  const parsed = extractJson(raw) as { items?: unknown[] };
-  return json({ items: Array.isArray(parsed.items) ? parsed.items : [], provider });
+  let parsed = extractJson(raw) as { items?: unknown[] };
+  // Пустой ответ — переспрашиваем один раз: модель иногда «теряется» на длинных списках.
+  if (!Array.isArray(parsed.items) || !parsed.items.length) {
+    const again = provider === 'claude' ? await askClaude(system, ctx.text) : await askYandex(system, `${ctx.text}\n\n(Разбери этот текст на записи. Ответь JSON, в items должна быть хотя бы одна запись.)`);
+    try { parsed = extractJson(again) as { items?: unknown[] }; } catch { /* оставляем первый ответ */ }
+  }
+  const items = Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed as unknown[] : [];
+  return json({ items, provider, raw: items.length ? undefined : raw.slice(0, 400) });
 }));
