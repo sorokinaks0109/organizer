@@ -1,43 +1,98 @@
-// «Сегодня»: один день за раз (стрелками или свайпом), дела + события календаря + выплаты. Ниже — сферы.
-import { useRef, useState } from 'react';
+// «Сегодня»: полоса недели, чек-лист здоровья, лента дня (дела + события календаря + выплаты), плитки сфер.
+import { useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
-import { classify, isCancelled } from '../lib/gcal';
-import { addDays, cap1, greeting, iso, MON, money, parseIso, plural, todayIso, WD_FULL, ymShift } from '../lib/dates';
-import { Icon, sc } from '../components/ui';
+import { classify, isCancelled, SUB_NUM } from '../lib/gcal';
+import { addDays, cap1, greeting, iso, MON, money, parseIso, plural, todayIso, WD, WD_FULL } from '../lib/dates';
+import { bounds, PAY, periodOf, summarize, type Period } from '../lib/money';
+import { monthOrNew } from '../lib/moneyActions';
+import type { Item } from '../lib/types';
+import { CHECK, Icon, Sheet, sc, useToast } from '../components/ui';
+import { TaskCard } from '../components/Rows';
 import { Tiles } from './Areas';
+import { HealthStrip } from './Health';
+import { PayoutSheet } from './Money';
+
+type Row = { key: string; node: ReactNode };
 
 export function Today() {
   const store = useStore();
   const { events, gError, gConnected, openItem, openEvent, go } = useApp();
-  const [offset, setOffset] = useState(0);
-  const x0 = useRef<number | null>(null);
+  const toast = useToast();
   const tKey = todayIso();
-  const day = iso(addDays(parseIso(tKey), offset)), d = parseIso(day);
-  const title = offset === 0 ? 'Сегодня' : offset === 1 ? 'Завтра' : offset === -1 ? 'Вчера' : cap1(WD_FULL[d.getDay()]);
-  const shift = (n: number) => setOffset((o) => Math.max(-30, Math.min(90, o + n)));
+  const [day, setDay] = useState(tKey);
+  const [payout, setPayout] = useState<Period | null>(null);
+  const [undated, setUndated] = useState(false);
+  const x0 = useRef<number | null>(null);
 
-  type Row = { key: string; time: string; title: string; color: string; late?: boolean; onClick: () => void; ev?: boolean; cancel?: boolean };
+  const d = parseIso(day);
+  const monday = addDays(d, -((d.getDay() + 6) % 7));
+  const week = Array.from({ length: 7 }, (_, i) => iso(addDays(monday, i)));
+  const shiftWeek = (n: number) => setDay(iso(addDays(d, n * 7)));
+  const rel = Math.round((d.getTime() - parseIso(tKey).getTime()) / 864e5);
+  const title = rel === 0 ? 'Сегодня' : rel === 1 ? 'Завтра' : rel === -1 ? 'Вчера' : `${cap1(WD_FULL[d.getDay()])}, ${d.getDate()} ${MON[d.getMonth()]}`;
+
+  const areaOf = (id: string | null) => store.areas.find((a) => a.id === id);
+  const tasksOn = (x: string) => store.items.filter((t) => t.kind === 'task' && t.due_date === x);
+  const eventsOn = (x: string) => (events || []).filter((e) => e.day === x);
+  const overdue = store.items.filter((t) => t.kind === 'task' && !t.done && t.due_date && t.due_date < tKey);
+  const toggle = (t: Item) => store.update('items', { id: t.id }, t.done ? { done: false, done_at: null } : { done: true, done_at: new Date().toISOString() });
+
+  const taskRow = (t: Item, late = false) => {
+    const a = areaOf(t.area_id), p = store.projects.find((x) => x.id === t.project_id), due = t.due_date ? parseIso(t.due_date) : null;
+    return (
+      <div className={'tl' + (t.done ? ' done' : '')} style={sc(a?.color || 'gray')}>
+        <span className={'tm' + (late ? ' late' : '')}>{late ? 'долг' : t.due_time || '—'}</span>
+        <button type="button" className="mk" aria-label={(t.done ? 'Вернуть: ' : 'Сделано: ') + t.title} onClick={() => toggle(t)}>{t.done ? CHECK : null}</button>
+        <button type="button" className="tx" onClick={() => openItem(t)}>
+          <b>{t.title}</b>
+          <small>{a?.name || 'Без сферы'}{p ? ` · ${p.name}` : ''}{late && due ? <span className="mut"> · было на {due.getDate()} {MON[due.getMonth()]}</span> : null}</small>
+        </button>
+      </div>
+    );
+  };
+
   const rows: Row[] = [];
-  for (const t of store.items) {
-    if (t.kind !== 'task' || t.done || !t.due_date) continue;
-    const a = store.areas.find((x) => x.id === t.area_id);
-    if (t.due_date === day) rows.push({ key: '1' + (t.due_time || '99'), time: t.due_time || 'без времени', title: t.title, color: a?.color || 'gray', onClick: () => openItem(t) });
-    else if (offset === 0 && t.due_date < tKey) rows.push({ key: '0', time: 'просрочено', title: t.title, color: a?.color || 'gray', late: true, onClick: () => openItem(t) });
-  }
-  for (const e of events || []) {
-    if (e.day !== day) continue;
+  for (const t of tasksOn(day)) rows.push({ key: (t.done ? '3' : '1') + (t.due_time || '00:00'), node: taskRow(t) });
+  if (day === tKey) for (const t of overdue) rows.push({ key: '0' + t.due_date, node: taskRow(t, true) });
+  for (const e of eventsOn(day)) {
     const c = classify(e, store.event_links, store.areas, store.projects);
-    rows.push({ key: '1' + (e.time || '00'), time: e.time || 'весь день', title: e.title, color: store.areas.find((x) => x.id === c.area)?.color || 'gray', ev: true, cancel: isCancelled(e.title), onClick: () => openEvent(e) });
+    const a = areaOf(c.area), cancel = isCancelled(e.title), num = e.title.match(SUB_NUM)?.[1];
+    rows.push({ key: (cancel ? '3' : '1') + (e.time || '00:00'), node: (
+      <div className={'tl' + (cancel ? ' cancel' : '')} style={sc(a?.color || 'gray')}>
+        <span className="tm">{e.time || 'весь день'}</span>
+        <span className="mk ev">{num || ''}</span>
+        <button type="button" className="tx" onClick={() => openEvent(e)}><b>{e.title}</b><small>{a?.name || 'Календарь'}<span className="mut">{e.endTime ? ` · до ${e.endTime}` : ''} · календарь</span></small></button>
+      </div>
+    ) });
   }
-  // День аванса или зарплаты: что ещё не оплачено.
-  for (const m of store.money_months) for (const [key, name, dd, sh] of [['avans', 'Аванс', 28, 0], ['zp', 'Зарплата', 13, 1]] as const) {
-    const [y, mo] = ymShift(m.ym, sh).split('-').map(Number);
-    if (iso(new Date(y, mo - 1, dd)) !== day) continue;
-    const open = (m.plan[key] || []).filter((r) => !r.paid);
-    if (open.length) rows.push({ key: '2', time: '', title: `${name}: ${open.length} ${plural(open.length, 'платёж', 'платежа', 'платежей')} на ${money(open.reduce((s, r) => s + r.sum, 0))}`, color: 'green', onClick: () => go({ name: 'pay', key }) });
+  // День выплаты: подтвердить сумму, потом — перейти к платежам.
+  const per = periodOf(day);
+  if (bounds(per).start === day) {
+    const s = summarize(monthOrNew(store, per.ym), per, store.expenses, store.incomes, tKey);
+    rows.push({ key: '0', node: (
+      <div className="tl">
+        <span className="tm">выплата</span><span className="mk money">₽</span>
+        <span className="tx">
+          <b>{PAY[per.key].name} {money(s.expected)}{s.received ? ' пришёл' : ''}</b>
+          <small><span className="mut">{s.rows.length} {plural(s.rows.length, 'платёж', 'платежа', 'платежей')} · осталось оплатить {money(s.left)}</span></small>
+          {!s.received ? <button className="pill" type="button" onClick={() => setPayout(per)}>Пришёл? Подтвердить сумму</button>
+            : s.left > 0 ? <button className="pill" type="button" onClick={() => go({ name: 'money' })}>Оплатить</button> : null}
+        </span>
+      </div>
+    ) });
   }
   rows.sort((a, b) => a.key.localeCompare(b.key));
+
+  const openCount = tasksOn(day).filter((t) => !t.done).length + new Set(eventsOn(day).filter((e) => !isCancelled(e.title)).map((e) => e.id)).size + (day === tKey ? overdue.length : 0);
+  const leftover = day === tKey ? [...overdue, ...tasksOn(tKey).filter((t) => !t.done)] : [];
+  const moveAll = async () => {
+    const tomorrow = iso(addDays(parseIso(tKey), 1));
+    await Promise.all(leftover.map((t) => store.update('items', { id: t.id }, { due_date: tomorrow })));
+    toast(`${leftover.length} ${plural(leftover.length, 'дело перенесено', 'дела перенесены', 'дел перенесено')} на завтра`);
+  };
+  const noDate = store.items.filter((t) => t.kind === 'task' && !t.done && !t.due_date);
+  const busy = (x: string) => tasksOn(x).filter((t) => !t.done).length + new Set(eventsOn(x).filter((e) => !isCancelled(e.title)).map((e) => e.id)).size;
 
   return (
     <>
@@ -48,29 +103,39 @@ export function Today() {
         </div>
         <button className="ibtn" type="button" aria-label="Настройки" style={{ background: 'var(--surface)' }} onClick={() => go({ name: 'settings' })}><Icon name="gear" /></button>
       </div>
-      <div className="card daycard"
-        onTouchStart={(e) => { x0.current = e.touches[0].clientX; }}
-        onTouchEnd={(e) => { if (x0.current == null) return; const dx = e.changedTouches[0].clientX - x0.current; x0.current = null; if (Math.abs(dx) > 60) shift(dx < 0 ? 1 : -1); }}>
-        <div className="day-nav">
-          <button className="ibtn" type="button" aria-label="Предыдущий день" onClick={() => shift(-1)}><Icon name="back" /></button>
-          <button className="day-title" type="button" onClick={() => setOffset(0)} title="Вернуться на сегодня">
-            <b>{title}</b><small>{d.getDate()} {MON[d.getMonth()]}{Math.abs(offset) <= 1 ? ', ' + WD_FULL[d.getDay()] : ''}</small>
-          </button>
-          <button className="ibtn" type="button" aria-label="Следующий день" onClick={() => shift(1)}><Icon name="next" /></button>
-        </div>
-        <div className="day-list">
-          {!rows.length && <span className="muted">{events == null && gConnected !== false ? 'Загружаю…' : offset === 0 ? 'На сегодня ничего нет.' : 'На этот день ничего нет.'}</span>}
-          {rows.map((r, i) => (
-            <div key={i} role="button" tabIndex={0} className={'today-it link' + (r.late ? ' late' : '') + (r.ev ? ' ev' : '') + (r.cancel ? ' cancel' : '')} style={sc(r.color)} onClick={r.onClick} onKeyDown={(e) => { if (e.key === 'Enter') r.onClick(); }}>
-              <time>{r.time}</time><div className="tt"><span>{r.title}</span></div>
-            </div>
-          ))}
-        </div>
-        {gError ? <span className="mini">Календарь: {gError}</span>
-          : gConnected === false ? <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => go({ name: 'settings' })}>Подключить Google Календарь →</button>
-          : rows.some((r) => r.ev) ? <span className="mini">С квадратиком — события Google Календаря. Нажми на тренировку, чтобы отметить, была ли.</span> : null}
+      <HealthStrip />
+      <div className="week-nav">
+        <button className="ibtn" type="button" aria-label="Прошлая неделя" onClick={() => shiftWeek(-1)}><Icon name="back" /></button>
+        <button className="btn ghost" type="button" style={{ padding: 0 }} onClick={() => setDay(tKey)}>{monday.getDate()} {MON[monday.getMonth()]} — {addDays(monday, 6).getDate()} {MON[addDays(monday, 6).getMonth()]}</button>
+        <button className="ibtn" type="button" aria-label="Следующая неделя" onClick={() => shiftWeek(1)}><Icon name="next" /></button>
       </div>
+      <div className="week" role="group" aria-label="Дни недели"
+        onTouchStart={(e) => { x0.current = e.touches[0].clientX; }}
+        onTouchEnd={(e) => { if (x0.current == null) return; const dx = e.changedTouches[0].clientX - x0.current; x0.current = null; if (Math.abs(dx) > 50) shiftWeek(dx < 0 ? 1 : -1); }}>
+        {week.map((x) => (
+          <button key={x} type="button" className={'wd' + (x === tKey ? ' today' : '')} aria-pressed={x === day} onClick={() => setDay(x)}>
+            {WD[parseIso(x).getDay()]}<b>{parseIso(x).getDate()}</b><span className="dots">{Array.from({ length: Math.min(3, busy(x)) }, (_, i) => <i key={i} />)}</span>
+          </button>
+        ))}
+      </div>
+      <div className="daytitle">
+        <b>{title}</b>
+        <span>{openCount ? `${openCount} ${plural(openCount, 'дело', 'дела', 'дел')}` : rows.length ? 'всё сделано' : ''}</span>
+      </div>
+      <div className="timeline">
+        {rows.map((r, i) => <div key={i} style={{ display: 'contents' }}>{r.node}</div>)}
+        {!rows.length && <div className="empty">{events == null && gConnected !== false ? 'Загружаю календарь…' : 'Свободный день. Можно взять что-то из «Без срока».'}</div>}
+      </div>
+      {leftover.length > 0 && <button className="btn" type="button" style={{ background: 'var(--surface)' }} onClick={moveAll}>Перенести несделанное на завтра · {leftover.length}</button>}
+      {gError ? <span className="mini">Календарь: {gError}</span>
+        : gConnected === false ? <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => go({ name: 'settings' })}>Подключить Google Календарь →</button> : null}
+      {noDate.length > 0 && <button className="linkrow" type="button" onClick={() => setUndated(true)}><b>Без срока</b><span>{noDate.length} {plural(noDate.length, 'дело', 'дела', 'дел')} ›</span></button>}
       <Tiles />
+      {payout && <PayoutSheet p={payout} onClose={() => setPayout(null)} />}
+      <Sheet open={undated} onClose={() => setUndated(false)}>
+        <h3>Без срока</h3>
+        <div className="tlist">{noDate.map((t) => <TaskCard key={t.id} t={t} showArea />)}</div>
+      </Sheet>
     </>
   );
 }

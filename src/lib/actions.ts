@@ -1,15 +1,31 @@
-// Сохранение того, что разобрала нейросеть: дела, события в календарь, заметки, деньги, желания.
+// Сохранение того, что разобрала нейросеть: дела, события в календарь, заметки, деньги, желания, здоровье.
 import { callFn } from './supabase';
 import { todayIso, WD_FULL } from './dates';
-import { DEFAULT_SPEND_CATS, INCOME_SOURCES, type Area, type Parsed, type Person, type Project, type Settings } from './types';
+import { periodOf } from './money';
+import { addIncome, monthOrNew, payRow } from './moneyActions';
+import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Parsed } from './types';
 import type { useStore } from './store';
 
 type Store = ReturnType<typeof useStore>;
 const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
 
-export async function parseVoice(text: string, areas: Area[], projects: Project[], people: Person[], settings: Settings, preferArea?: string | null): Promise<Parsed[]> {
+/** Неоплаченные платежи текущего периода — чтобы «оплатила ТСЖ» отметило нужную строку. */
+function openPayments(store: Store) {
+  const p = periodOf(todayIso());
+  return (monthOrNew(store, p.ym).plan[p.key] || []).filter((r) => !r.paid);
+}
+
+/** Подпись записи для сообщений: название дела, трата, платёж или пункт здоровья. */
+export function parsedLabel(p: Parsed): string {
+  return p.type === 'health' ? 'отметка здоровья' : p.type === 'paid' ? p.name : p.type === 'expense' || p.type === 'income' ? p.what : p.title;
+}
+
+export async function parseVoice(text: string, store: Store, preferArea?: string | null): Promise<Parsed[]> {
+  const { areas, projects, people, settings } = store;
   const d = new Date();
   const ordered = preferArea ? [...areas].sort((a, b) => (a.id === preferArea ? -1 : b.id === preferArea ? 1 : 0)) : areas;
+  const health = settings.health ?? DEFAULT_HEALTH;
+  const payments = openPayments(store);
   const res = await callFn<{ items: Parsed[] }>('assistant', {
     text: preferArea ? `${text}\n\n(Записано внутри сферы «${areas.find((a) => a.id === preferArea)?.name}» — если не сказано иное, клади туда.)` : text,
     today: todayIso(), weekday: WD_FULL[d.getDay()],
@@ -17,6 +33,8 @@ export async function parseVoice(text: string, areas: Area[], projects: Project[
     people: people.map((p) => ({ id: p.id, name: p.name })),
     spendCats: settings.spendCats?.length ? settings.spendCats : DEFAULT_SPEND_CATS,
     incomeSources: INCOME_SOURCES,
+    health: health.map((h) => ({ id: h.id, name: h.name, kind: h.kind })),
+    payments: payments.map((r) => ({ id: r.id, name: r.name, sum: r.sum })),
   });
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
   const okD = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
@@ -33,14 +51,29 @@ export async function parseVoice(text: string, areas: Area[], projects: Project[
     else if (t === 'event' && raw.title && okD(raw.date)) out.push({ type: 'event', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date)!, start: okT(raw.start), end: okT(raw.end), repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(raw.repeat as string) ? (raw.repeat as string) : null, remind: ['hour', 'day', 'week', 'none'].includes(raw.remind as string) ? (raw.remind as string) : null, people: ppl(raw.people) });
     else if (t === 'note') out.push({ type: 'note', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id) });
     else if (t === 'expense' && Number(raw.amount) > 0) out.push({ type: 'expense', what: String(raw.what || 'Без названия'), amount: Math.round(Number(raw.amount)), category: String(raw.category || 'Прочее'), wb: !!raw.wb, date: okD(raw.date) });
-    else if (t === 'income' && Number(raw.amount) > 0) out.push({ type: 'income', what: String(raw.what || 'Доход'), amount: Math.round(Number(raw.amount)), source: INCOME_SOURCES.includes(raw.source as string) ? (raw.source as string) : 'Прочее', date: okD(raw.date) });
-    else if (t === 'wish') out.push({ type: 'wish', title: String(raw.title), area_id: area(raw.area_id), target_sum: Number(raw.target_sum) > 0 ? Math.round(Number(raw.target_sum)) : null });
+    else if (t === 'income' && Number(raw.amount) > 0) {
+      const source = INCOME_SOURCES.includes(raw.source as string) ? (raw.source as string) : 'Прочее';
+      const target = raw.target === 'reserve' || raw.target === 'wish' ? raw.target : source === 'Отпускные' ? 'reserve' : 'live';
+      out.push({ type: 'income', what: String(raw.what || 'Доход'), amount: Math.round(Number(raw.amount)), source, date: okD(raw.date), target, wish_id: null });
+    } else if (t === 'wish') out.push({ type: 'wish', title: String(raw.title), area_id: area(raw.area_id), target_sum: Number(raw.target_sum) > 0 ? Math.round(Number(raw.target_sum)) : null });
+    else if (t === 'paid') {
+      const row = payments.find((r) => r.id === raw.row_id);
+      if (row) out.push({ type: 'paid', row_id: row.id, name: row.name, amount: Number(raw.amount) > 0 ? Math.round(Number(raw.amount)) : row.sum });
+    } else if (t === 'health') {
+      const h = health.find((x) => x.id === raw.item_id);
+      if (h) out.push({ type: 'health', item_id: h.id, value: Math.max(1, Math.round(Number(raw.value) || 1)) });
+    }
   }
   return out;
 }
 
 export async function createCalendarEvent(e: { title: string; date: string; start?: string | null; end?: string | null; repeat?: string | null; remind?: string | null; attendees?: string[]; note?: string }) {
   return callFn<{ id: string; link: string; calendarId: string }>('gcal', { action: 'create', event: { ...e, timeZone: TZ } });
+}
+
+/** Отметка чек-листа здоровья за день: галочка ставится, счётчик прибавляется. */
+export async function markHealth(store: Store, item_id: string, value: number, day = todayIso()) {
+  await store.upsert('health_log', { day, item_id, value }, ['day', 'item_id']);
 }
 
 /** Сохраняет разобранные записи. Возвращает текст для всплывающего сообщения. */
@@ -62,13 +95,21 @@ export async function saveParsed(list: Parsed[], store: Store): Promise<string> 
         await store.upsert('event_links', { event_id: ev.id, area_id: p.area_id, project_id: p.project_id });
         saved++;
       } else if (p.type === 'expense') {
-        await store.insert('expenses', { what: p.what, amount: p.amount, category: p.category, wb: !!p.wb, spent_on: p.date || todayIso() }); saved++;
+        await store.insert('expenses', { what: p.what, amount: p.amount, category: p.category, wb: !!p.wb, spent_on: p.date || todayIso(), kind: 'spend' }); saved++;
       } else if (p.type === 'income') {
-        await store.insert('incomes', { what: p.what, amount: p.amount, source: p.source, got_on: p.date || todayIso() }); saved++;
+        await addIncome(store, { what: p.what, amount: p.amount, source: p.source, got_on: p.date, target: p.target, wish_id: p.wish_id }); saved++;
       } else if (p.type === 'wish') {
         await store.insert('wishes', { title: p.title, area_id: p.area_id, target_sum: p.target_sum }); saved++;
+      } else if (p.type === 'paid') {
+        const per = periodOf(todayIso());
+        const row = (monthOrNew(store, per.ym).plan[per.key] || []).find((r) => r.id === p.row_id);
+        if (row && !row.paid) { await payRow(store, per, row, p.amount); saved++; }
+      } else if (p.type === 'health') {
+        const h = (store.settings.health ?? DEFAULT_HEALTH).find((x) => x.id === p.item_id);
+        const cur = store.health_log.find((x) => x.day === todayIso() && x.item_id === p.item_id)?.value || 0;
+        await markHealth(store, p.item_id, h?.kind === 'count' ? cur + p.value : 1); saved++;
       }
-    } catch (e) { problems.push(`${'title' in p ? p.title : p.what}: ${(e as Error).message}`); }
+    } catch (e) { problems.push(`${parsedLabel(p)}: ${(e as Error).message}`); }
   }
   return problems.length ? `Сохранено: ${saved}. Не вышло: ${problems.join('; ')}` : `Сохранено: ${saved}`;
 }

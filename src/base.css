@@ -1,17 +1,19 @@
 
-/* Основа оформления: серый фон, пастельные плитки, нижнее меню, выезжающие снизу окна. */
+/* Основа оформления: прохладный светлый фон, белые карточки, пастельные сферы, синий акцент, широкий шрифт для заголовков и цифр. */
 :root {
-  --bg: #e4e5e8;
-  --surface: #fafafb;
-  --ink: #15171c;
-  --muted: #7b808b;
-  --line: #e7e9ed;
-  --field: #eeeff1;
-  --accent: #15171c;
+  --bg: #eceef2;
+  --surface: #ffffff;
+  --ink: #16181d;
+  --muted: #646b79;
+  --line: #e1e4ea;
+  --field: #f1f2f5;
+  --accent: #1f3fd1;
   --on-accent: #ffffff;
-  --danger: #cf4339;
-  --warn: #c7771a;
-  --ok: #2f9a5d;
+  --danger: #c2382f;
+  --warn: #b26a00;
+  --ok: #1f8a4c;
+  --ok-bg: #dcefe3;
+  --danger-bg: #f8dedb;
   --note: #fff5d1;
   --note-ink: #57460f;
   --c-blue: #3d5bd9; --c-navy: #2f7fd6; --c-red: #e0574f; --c-green: #2f9a5d; --c-teal: #1c9488;
@@ -21,12 +23,13 @@
   --d-blue: #33478f; --d-navy: #2b5a86; --d-red: #9a3b34; --d-green: #2c6b45; --d-teal: #1f655d;
   --d-orange: #995223; --d-brown: #7c4d2c; --d-purple: #5d4494; --d-pink: #8e3762; --d-gray: #545966;
   --font: "Onest", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-display: "Unbounded", "Onest", system-ui, sans-serif;
   --navh: 72px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #131417; --surface: #1d1f23; --ink: #eceef2; --muted: #8a8f99; --line: #2a2d33; --field: #22252b;
-    --accent: #eceef2; --on-accent: #0d0e11; --danger: #ff7b70; --warn: #f0a65a; --ok: #5fd28f; --note: #3a3320; --note-ink: #f3e3a8;
+    --bg: #111317; --surface: #1b1e24; --ink: #eef0f4; --muted: #9ba2af; --line: #2c3038; --field: #23272e;
+    --accent: #8fa2ff; --on-accent: #0f1530; --danger: #ff8077; --warn: #f0b552; --ok: #5fd28f; --ok-bg: #1e3527; --danger-bg: #42221f; --note: #3a3320; --note-ink: #f3e3a8;
     --c-blue: #8199ff; --c-navy: #6fb0ff; --c-red: #ff8077; --c-green: #5fd28f; --c-teal: #4fd0c0;
     --c-orange: #ffa366; --c-brown: #e0a07a; --c-purple: #b597ff; --c-pink: #ff8fc1; --c-gray: #9a9fa9;
     --p-blue: #283049; --p-navy: #243444; --p-red: #452a29; --p-green: #233a2c; --p-teal: #213a37;
@@ -37,8 +40,8 @@
   }
 }
 :root[data-theme="dark"] {
-  --bg: #131417; --surface: #1d1f23; --ink: #eceef2; --muted: #8a8f99; --line: #2a2d33; --field: #22252b;
-  --accent: #eceef2; --on-accent: #0d0e11; --danger: #ff7b70; --warn: #f0a65a; --ok: #5fd28f; --note: #3a3320; --note-ink: #f3e3a8;
+  --bg: #111317; --surface: #1b1e24; --ink: #eef0f4; --muted: #9ba2af; --line: #2c3038; --field: #23272e;
+  --accent: #8fa2ff; --on-accent: #0f1530; --danger: #ff8077; --warn: #f0b552; --ok: #5fd28f; --ok-bg: #1e3527; --danger-bg: #42221f; --note: #3a3320; --note-ink: #f3e3a8;
   --c-blue: #8199ff; --c-navy: #6fb0ff; --c-red: #ff8077; --c-green: #5fd28f; --c-teal: #4fd0c0;
   --c-orange: #ffa366; --c-brown: #e0a07a; --c-purple: #b597ff; --c-pink: #ff8fc1; --c-gray: #9a9fa9;
   --p-blue: #283049; --p-navy: #243444; --p-red: #452a29; --p-green: #233a2c; --p-teal: #213a37;
@@ -64,7 +67,7 @@ button { cursor: pointer; }
 .muted { color: var(--muted); }
 .num { font-variant-numeric: tabular-nums; }
 .date { color: var(--muted); font-size: 14.5px; }
-.h { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; margin: 2px 0 0; text-wrap: balance; }
+.h { font-family: var(--f-display); font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; margin: 2px 0 0; text-wrap: balance; }
 .card { background: var(--surface); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .card-t { font-size: 12.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .card-t button { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 14.5px; color: var(--ink); background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted); }
@@ -112,7 +115,7 @@ textarea.field { resize: vertical; line-height: 1.4; }
 @media (min-width: 620px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .tile { border: 0; text-align: left; background: var(--sp); color: var(--sd); border-radius: 18px; padding: 16px; min-height: 112px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
 .tile b { font-size: 17.5px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
-.tile .n { font-size: 30px; font-weight: 700; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.tile .n { font-family: var(--f-display); font-size: 24px; font-weight: 600; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
 .tile small { display: block; font-size: 13px; opacity: .75; margin-top: 3px; }
 .tile.add { border: 2px dashed var(--muted); background: transparent; align-items: center; justify-content: center; color: var(--muted); font-weight: 500; font-size: 16px; }
 
@@ -269,7 +272,7 @@ textarea.field { resize: vertical; line-height: 1.4; }
 .bar > i { display: block; height: 100%; border-radius: 5px; background: var(--sc, var(--ink)); }
 
 /* money */
-.big-num { font-size: 38px; font-weight: 700; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.big-num { font-family: var(--f-display); font-size: 38px; font-weight: 600; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
 .big-num.neg { color: var(--danger); }
 .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 16px; font-variant-numeric: tabular-nums; }
 .kv > span:first-child { color: var(--muted); }

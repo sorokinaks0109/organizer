@@ -14,6 +14,9 @@ const P: Record<string, string> = {
   pen: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13', up: 'M12 19V5M6 11l6-6 6 6', down: 'M12 5v14M6 13l6 6 6-6',
   stats: 'M4 20h16M7 20v-6M12 20V8M17 20v-9', image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01',
 };
+/** Галочка внутри отмеченного кружка или квадратика. */
+export const CHECK = <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+
 export function Icon({ name, w = 1.9 }: { name: keyof typeof P | string; w?: number }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={P[name] || ''} fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }

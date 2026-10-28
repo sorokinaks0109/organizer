@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { supabase } from '../lib/supabase';
+import { saveToWish } from '../lib/moneyActions';
 import { fmtDate, money } from '../lib/dates';
 import type { Wish } from '../lib/types';
 import { Icon, Sheet, sc, useToast } from '../components/ui';
@@ -75,6 +76,7 @@ function WishSheet({ wish, open, status, onClose }: { wish: Wish | null; open: b
   const [date, setDate] = useState(wish?.target_date || '');
   const [image, setImage] = useState<string | null>(wish?.image_url || null);
   const [busy, setBusy] = useState(false);
+  const [put, setPut] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
   const preview = useImage(image);
 
@@ -125,6 +127,12 @@ function WishSheet({ wish, open, status, onClose }: { wish: Wish | null; open: b
         <label className="lbl">Сколько нужно<input className="field" type="number" inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="₽" /></label>
         <label className="lbl">Уже есть<input className="field" type="number" inputMode="numeric" value={saved} onChange={(e) => setSaved(e.target.value)} placeholder="₽" /></label>
       </div>
+      {wish && wish.status !== 'done' && (
+        <div className="row">
+          <input className="field" style={{ flex: '1 1 120px' }} type="number" inputMode="numeric" placeholder="Сколько отложить, ₽" value={put} onChange={(e) => setPut(e.target.value)} />
+          <button className="btn" type="button" disabled={!(Number(put) > 0)} onClick={async () => { await saveToWish(store, wish, Number(put)); toast(`Отложено ${money(Number(put))} — видно в расходах как «Копилка»`); onClose(); }}>Отложить</button>
+        </div>
+      )}
       <div className="row">
         <label className="lbl">К какому сроку<input className="field" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label className="lbl">Сфера

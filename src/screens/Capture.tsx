@@ -2,12 +2,12 @@
 import { useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useDictation } from '../lib/voice';
-import { parseVoice, saveParsed } from '../lib/actions';
+import { parsedLabel, parseVoice, saveParsed } from '../lib/actions';
 import { fmtDate, money, parseIso, MON } from '../lib/dates';
-import { DEFAULT_SPEND_CATS, INCOME_SOURCES, type Parsed } from '../lib/types';
+import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Parsed } from '../lib/types';
 import { Icon, Sheet, useToast } from '../components/ui';
 
-const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание' };
+const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание', paid: 'Платёж оплачен', health: 'Здоровье' };
 const REPEAT: Record<string, string> = { DAILY: 'каждый день', WEEKLY: 'каждую неделю', MONTHLY: 'каждый месяц', YEARLY: 'каждый год' };
 const REMIND: Record<string, string> = { hour: 'за час', day: 'за день', week: 'за неделю', none: 'без напоминания' };
 
@@ -27,7 +27,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
     if (!t.trim()) return;
     setBusy(true); setErr(null);
     try {
-      const res = await parseVoice(t, store.areas, store.projects, store.people, store.settings, preferArea);
+      const res = await parseVoice(t, store, preferArea);
       if (!res.length) { setErr('Не поняла, что записать. Скажи иначе или допиши руками.'); return; }
       if (store.settings.autoSave) { toast(await saveParsed(res, store)); close(); return; }
       setItems(res);
@@ -83,8 +83,9 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
 }
 
 function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Partial<Parsed>) => void; onRemove: () => void }) {
-  const { areas, projects, people, settings } = useStore();
-  const title = 'title' in p ? p.title : p.what;
+  const { areas, projects, people, settings, wishes } = useStore();
+  const title = parsedLabel(p);
+  const editable = p.type !== 'paid' && p.type !== 'health';
   const areaSel = 'area_id' in p && (
     <select aria-label="Сфера" value={p.area_id ?? ''} onChange={(e) => onChange({ area_id: e.target.value || null, ...('project_id' in p ? { project_id: null } : {}) } as Partial<Parsed>)}>
       <option value="">Без сферы</option>
@@ -113,7 +114,7 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
       <div className="pv-top">
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span className="pv-type">{TYPE_NAME[p.type]}</span>
-          <input value={title} aria-label="Название" onChange={(e) => onChange(('title' in p ? { title: e.target.value } : { what: e.target.value }) as Partial<Parsed>)} />
+          {editable ? <input value={title} aria-label="Название" onChange={(e) => onChange(('title' in p ? { title: e.target.value } : { what: e.target.value }) as Partial<Parsed>)} /> : <b style={{ fontSize: 16 }}>{p.type === 'health' ? (settings.health ?? DEFAULT_HEALTH).find((h) => h.id === p.item_id)?.name + (p.value > 1 ? ` · ${p.value}` : '') : title}</b>}
         </div>
         <button className="x" type="button" aria-label="Убрать" onClick={onRemove}>×</button>
       </div>
@@ -145,6 +146,23 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
           <input type="number" inputMode="numeric" aria-label="Сумма" value={p.amount} style={{ width: 110 }} onChange={(e) => onChange({ amount: Number(e.target.value) || 0 })} />
           <select aria-label="Источник" value={p.source} onChange={(e) => onChange({ source: e.target.value })}>{INCOME_SOURCES.map((c) => <option key={c}>{c}</option>)}</select>
           <span className="mini">+{money(p.amount)} · {dateLabel(p.date)}</span>
+        </div>
+      )}
+      {p.type === 'income' && (
+        <div className="pv-row">
+          <span className="mini">Куда:</span>
+          <select aria-label="Куда направить" value={p.target || 'live'} onChange={(e) => onChange({ target: e.target.value as 'live' | 'reserve' | 'wish' })}>
+            <option value="live">на жизнь сейчас</option>
+            <option value="reserve">в резерв на будущие платежи</option>
+            {wishes.some((w) => w.status !== 'done') && <option value="wish">в копилку желания</option>}
+          </select>
+          {p.target === 'wish' && <select aria-label="Желание" value={p.wish_id || ''} onChange={(e) => onChange({ wish_id: e.target.value || null })}><option value="">выбери желание</option>{wishes.filter((w) => w.status !== 'done').map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}</select>}
+        </div>
+      )}
+      {p.type === 'paid' && (
+        <div className="pv-row">
+          <input type="number" inputMode="numeric" aria-label="Сумма" value={p.amount} style={{ width: 110 }} onChange={(e) => onChange({ amount: Number(e.target.value) || 0 })} />
+          <span className="mini">отмечу оплаченным, попадёт в расходы</span>
         </div>
       )}
     </div>

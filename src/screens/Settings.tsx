@@ -111,7 +111,7 @@ export function Settings() {
         <span>{email}</span>
         <div className="row">
           <button className="btn" type="button" onClick={async () => { const p = prompt('Новый пароль (не короче 8 символов)'); if (!p) return; const { error } = await supabase!.auth.updateUser({ password: p }); toast(error ? error.message : 'Пароль изменён'); }}>Сменить пароль</button>
-          <button className="btn ghost danger" type="button" onClick={async () => { await supabase!.auth.signOut(); try { localStorage.removeItem('org.cache.v1'); localStorage.removeItem('org.gcal.v1'); } catch { /* не страшно */ } location.reload(); }}>Выйти</button>
+          <button className="btn ghost danger" type="button" onClick={async () => { await supabase!.auth.signOut(); try { localStorage.removeItem('org.cache.v2'); localStorage.removeItem('org.gcal.v1'); } catch { /* не страшно */ } location.reload(); }}>Выйти</button>
         </div>
       </div>
 

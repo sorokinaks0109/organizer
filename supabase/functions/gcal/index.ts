@@ -150,7 +150,7 @@ Deno.serve(handle(async (req) => {
       }
       const allDay = !e.start;
       const reminders = e.remind === 'none' ? { useDefault: false, overrides: [] }
-        : e.remind ? { useDefault: false, overrides: [{ method: 'popup', minutes: allDay ? { hour: 900, day: 900, week: 6 * 1440 + 900 }[e.remind] ?? 900 : { hour: 60, day: 1440, week: 10080 }[e.remind] ?? 60 }] }
+        : e.remind ? { useDefault: false, overrides: [{ method: 'popup', minutes: allDay ? { hour: 900, day: 900, week: 6 * 1440 + 900 }[e.remind] ?? 900 : { now: 0, hour: 60, day: 1440, week: 10080 }[e.remind] ?? 60 }] }
         : undefined;
       const fam = e.attendees?.length ? await familyCalendarId(userId) : null;
       const calendarId = fam || 'primary';
@@ -163,6 +163,14 @@ Deno.serve(handle(async (req) => {
       };
       const created = await gapi(token, `/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=${e.attendees?.length ? 'all' : 'none'}`, { method: 'POST', body: JSON.stringify(payload) });
       return json({ id: created.id, link: created.htmlLink, calendarId });
+    }
+    case 'delete': {
+      const token = await accessToken(userId);
+      await gapi(token, `/calendars/${encodeURIComponent(body.calendarId || 'primary')}/events/${encodeURIComponent(body.id)}?sendUpdates=none`, { method: 'DELETE' }).catch((e) => {
+        // Событие уже удалено в самом календаре — это не ошибка.
+        if (!/404|410|deleted|not found/i.test(String(e?.message))) throw e;
+      });
+      return json({ ok: true });
     }
     case 'rename': {
       const token = await accessToken(userId);

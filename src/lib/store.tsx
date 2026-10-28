@@ -2,16 +2,16 @@
 // Последняя копия хранится в браузере, чтобы приложение открывалось мгновенно и без сети.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { supabase } from './supabase';
-import type { Area, EventLink, Expense, Income, Item, MoneyMonth, Person, Project, Settings, Wish } from './types';
+import type { Area, EventLink, Expense, HealthLog, Income, Item, MoneyMonth, Person, Project, Settings, Wish } from './types';
 
 export type Tables = {
   areas: Area[]; projects: Project[]; items: Item[]; event_links: EventLink[]; people: Person[];
-  money_months: MoneyMonth[]; expenses: Expense[]; incomes: Income[]; wishes: Wish[];
+  money_months: MoneyMonth[]; expenses: Expense[]; incomes: Income[]; wishes: Wish[]; health_log: HealthLog[];
 };
 type TableName = keyof Tables;
-const TABLES: TableName[] = ['areas', 'projects', 'items', 'event_links', 'people', 'money_months', 'expenses', 'incomes', 'wishes'];
-const EMPTY: Tables = { areas: [], projects: [], items: [], event_links: [], people: [], money_months: [], expenses: [], incomes: [], wishes: [] };
-const CACHE_KEY = 'org.cache.v1';
+const TABLES: TableName[] = ['areas', 'projects', 'items', 'event_links', 'people', 'money_months', 'expenses', 'incomes', 'wishes', 'health_log'];
+const EMPTY: Tables = { areas: [], projects: [], items: [], event_links: [], people: [], money_months: [], expenses: [], incomes: [], wishes: [], health_log: [] };
+const CACHE_KEY = 'org.cache.v2';
 
 type Store = Tables & {
   settings: Settings;
@@ -20,7 +20,8 @@ type Store = Tables & {
   insert: <T extends TableName>(t: T, row: Partial<Tables[T][number]>) => Promise<Tables[T][number] | null>;
   update: <T extends TableName>(t: T, match: Record<string, string>, patch: Partial<Tables[T][number]>) => Promise<void>;
   remove: (t: TableName, match: Record<string, string>) => Promise<void>;
-  upsert: <T extends TableName>(t: T, row: Partial<Tables[T][number]>) => Promise<void>;
+  /** keys — поля первичного ключа: тогда строка обновится на экране сразу, не дожидаясь сервера. */
+  upsert: <T extends TableName>(t: T, row: Partial<Tables[T][number]>, keys?: string[]) => Promise<void>;
   saveSettings: (patch: Partial<Settings>) => Promise<void>;
   reload: () => Promise<void>;
 };
@@ -102,7 +103,15 @@ export function StoreProvider({ userId, children, onError }: { userId: string; c
       const { error } = await q;
       if (error) { fail(error); fetchTable(t).catch(() => {}); }
     },
-    upsert: async (t, row) => {
+    upsert: async (t, row, keys) => {
+      if (keys) {
+        const r = row as Record<string, unknown>;
+        const same = (x: Record<string, unknown>) => keys.every((k) => x[k] === r[k]);
+        setData((d) => {
+          const list = d[t] as Record<string, unknown>[];
+          return { ...d, [t]: list.some(same) ? list.map((x) => (same(x) ? { ...x, ...r } : x)) : [...list, r] };
+        });
+      }
       const { error } = await supabase!.from(t).upsert(row as never);
       if (error) fail(error);
       fetchTable(t).catch(() => {});

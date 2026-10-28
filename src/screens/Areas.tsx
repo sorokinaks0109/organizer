@@ -3,27 +3,38 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM, type CalEvent } from '../lib/gcal';
-import { plural, todayIso, iso, addDays } from '../lib/dates';
+import { fmtDate, todayIso, iso, addDays } from '../lib/dates';
 import { COLORS, type Area, type Color, type Project } from '../lib/types';
 import { Chip, Hero, Icon, Sheet, sc, useToast } from '../components/ui';
 import { EventCard, TaskCard } from '../components/Rows';
+import { HealthCard } from './Health';
 
 export function Tiles() {
   const { areas, items, event_links, projects } = useStore();
   const { events, go } = useApp();
   const [create, setCreate] = useState(false);
   const week = iso(addDays(new Date(), 7)), t = todayIso();
+  const upcoming = (events || []).filter((e) => e.day >= t && !isCancelled(e.title));
   return (
     <>
       <div className="tiles">
         {areas.map((a) => {
-          const open = items.filter((x) => x.area_id === a.id && x.kind === 'task' && !x.done).length;
-          const evs = new Set((events || []).filter((e) => e.day >= t && e.day <= week && !isCancelled(e.title) && classify(e, event_links, areas, projects).area === a.id).map((e) => e.id)).size;
-          const pr = projects.filter((p) => p.area_id === a.id && !p.done).length;
+          const open = items.filter((x) => x.area_id === a.id && x.kind === 'task' && !x.done);
+          const evs = upcoming.filter((e) => classify(e, event_links, areas, projects).area === a.id);
+          const weekEvs = new Set(evs.filter((e) => e.day <= week).map((e) => e.id)).size;
+          // Следующее: ближайшее дело со сроком или событие; если сроков нет — первое дело без срока.
+          const cands = [
+            ...open.map((x) => ({ k: x.due_date ? x.due_date + (x.due_time || '99:99') : '9999', text: x.title, when: x.due_date ? fmtDate(x.due_date) + (x.due_time ? `, ${x.due_time}` : '') : '' })),
+            ...evs.map((e) => ({ k: e.day + (e.time || '00:00'), text: e.title, when: fmtDate(e.day) + (e.time ? `, ${e.time}` : '') })),
+          ].sort((x, y) => x.k.localeCompare(y.k));
+          const next = cands[0];
+          const sub = evs.map((e) => e.title.match(SUB_NUM)).find(Boolean);
+          const n = open.length + weekEvs;
           return (
             <button key={a.id} className="tile" type="button" style={sc(a.color)} onClick={() => go({ name: 'area', id: a.id })}>
-              <b>{a.name}</b>
-              <div><div className="n">{open + evs}</div><small>{plural(open + evs, 'дело', 'дела', 'дел')}{evs ? ` · ${evs} в календаре на неделе` : ''}{pr ? ` · ${pr} ${plural(pr, 'проект', 'проекта', 'проектов')}` : ''}</small></div>
+              <div className="tt"><b>{a.name}</b><span className="n">{n}</span></div>
+              {sub && <div className="next"><em>абонемент · следующее №{sub[1]} из {sub[2]}</em><div className="sub" aria-hidden="true">{Array.from({ length: Number(sub[2]) }, (_, i) => <i key={i} className={i < Number(sub[1]) - 1 ? 'on' : ''} />)}</div></div>}
+              <div className="next"><em>{next ? `дальше${next.when ? ' · ' + next.when : ''}` : 'дел нет'}</em>{next ? next.text : 'Нажми, чтобы добавить'}</div>
             </button>
           );
         })}
@@ -82,6 +93,7 @@ export function AreaView({ id, project, tab = 'deals' }: { id: string; project?:
       </Hero>
       {tab === 'deals' ? (
         <div className="tlist" style={sc(a.color)}>
+          {!project && /здоров/i.test(a.name) && <HealthCard />}
           {trainings.length > 0 && <Subscription list={trainings} />}
           {!rows.length && <div className="empty">Дел пока нет. Нажми «+» и надиктуй — дело само попадёт сюда.{a.keywords.length ? ` События календаря со словами «${a.keywords.join('», «')}» тоже показываются здесь.` : ''}</div>}
           {rows.map((r) => r.n)}

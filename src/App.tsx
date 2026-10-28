@@ -10,7 +10,7 @@ import { Icon, useToast } from './components/ui';
 import { Login, NotConfigured } from './screens/Login';
 import { Today } from './screens/Today';
 import { AreaView, Tiles } from './screens/Areas';
-import { Money, Pay, Spend, Stats } from './screens/Money';
+import { Money, Reserve, Stats } from './screens/Money';
 import { Wishes } from './screens/Wishes';
 import { Settings } from './screens/Settings';
 import { Capture } from './screens/Capture';
@@ -96,7 +96,7 @@ function Shell() {
   const tab = view.name === 'today' || view.name === 'settings' ? 'today'
     : view.name === 'areas' || view.name === 'area' ? 'areas'
     : view.name === 'wishes' ? 'wishes' : 'money';
-  const hero = view.name === 'area' || view.name === 'pay' || view.name === 'settings';
+  const hero = view.name === 'area' || view.name === 'reserve' || view.name === 'stats' || view.name === 'settings';
   const areaForCapture = view.name === 'area' ? view.id : null;
 
   return (
@@ -108,8 +108,7 @@ function Shell() {
           {view.name === 'areas' && <><div className="hello"><span className="date">Все сферы жизни</span><h1 className="h">Сферы</h1></div><Tiles /></>}
           {view.name === 'area' && <AreaView key={view.id + (view.project || '')} id={view.id} project={view.project} tab={view.tab} />}
           {view.name === 'money' && <Money />}
-          {view.name === 'pay' && <Pay k={view.key} />}
-          {view.name === 'spend' && <Spend />}
+          {view.name === 'reserve' && <Reserve />}
           {view.name === 'stats' && <Stats />}
           {view.name === 'wishes' && <Wishes />}
           {view.name === 'settings' && <Settings />}

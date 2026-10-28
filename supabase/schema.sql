@@ -113,6 +113,24 @@ create table if not exists wishes (
   created_at timestamptz not null default now()
 );
 
+-- v2: деньги по выплатам. Оплаченный платёж становится расходом (kind = payment),
+-- доход можно направить на жизнь, в резерв на будущие платежи или в копилку желания.
+alter table expenses add column if not exists kind text not null default 'spend';
+alter table expenses add column if not exists plan_ref text;
+alter table expenses add column if not exists from_reserve boolean not null default false;
+alter table incomes add column if not exists target text not null default 'live';
+alter table incomes add column if not exists plan_ref text;
+alter table incomes add column if not exists wish_id uuid references wishes on delete set null;
+
+-- Ежедневный чек-лист здоровья: витамины, вода, сон. Одна строка — один пункт за один день.
+create table if not exists health_log (
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  day date not null,
+  item_id text not null,
+  value int not null default 1,
+  primary key (user_id, day, item_id)
+);
+
 -- Настройки одним документом: лимиты, категории трат, календарь «Семья», абонементы и т.п.
 create table if not exists settings (
   user_id uuid primary key default auth.uid() references auth.users on delete cascade,
@@ -139,7 +157,7 @@ create table if not exists oauth_states (
 do $$
 declare t text;
 begin
-  foreach t in array array['areas','projects','items','event_links','people','money_months','expenses','incomes','wishes','settings'] loop
+  foreach t in array array['areas','projects','items','event_links','people','money_months','expenses','incomes','wishes','settings','health_log'] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists own_rows on %I', t);
     execute format('create policy own_rows on %I for all using (user_id = auth.uid()) with check (user_id = auth.uid())', t);
@@ -152,7 +170,7 @@ alter table oauth_states enable row level security;
 do $$
 declare t text;
 begin
-  foreach t in array array['areas','projects','items','event_links','people','money_months','expenses','incomes','wishes','settings'] loop
+  foreach t in array array['areas','projects','items','event_links','people','money_months','expenses','incomes','wishes','settings','health_log'] loop
     begin
       execute format('alter publication supabase_realtime add table %I', t);
     exception when duplicate_object then null;
