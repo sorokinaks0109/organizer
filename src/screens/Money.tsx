@@ -113,7 +113,7 @@ export function Money() {
 
       <div className="block">
         <div className="bh"><h4>Платежи</h4><span>осталось {money(s.left)}</span></div>
-        {!open.length && !done.length && <div className="empty" style={{ padding: 12 }}>Платежей с этой выплаты нет.</div>}
+        {!open.length && !done.length && <div className="empty" style={{ padding: 12 }}>Платежей с этой выплаты пока нет. Добавь их кнопкой «+ платёж» ниже или загрузи свой план файлом: Настройки → «Перенос из старого органайзера». Со следующего месяца список будет создаваться сам.</div>}
         {open.map((r) => <PayRow key={r.id} r={r} p={p} onEdit={() => setRow(r)} />)}
         {!open.length && done.length > 0 && <div className="alert ok">Всё оплачено.</div>}
         {done.length > 0 && <button type="button" className="paidtoggle" aria-expanded={showPaid} onClick={() => setShowPaid(!showPaid)}><span>Оплачено {done.length} из {s.rows.length}</span><b>{money(done.reduce((a, r) => a + rowCost(r), 0))} {showPaid ? '▴' : '▾'}</b></button>}

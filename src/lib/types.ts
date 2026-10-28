@@ -26,6 +26,8 @@ export type Settings = {
   spendCats?: string[];
   planCats?: string[];
   autoSave?: boolean;
+  /** Чем распознавать речь: Yandex SpeechKit (точнее) или встроенным распознаванием браузера. */
+  voice?: 'yandex' | 'browser';
   /** Сферы по умолчанию уже созданы при первом входе. */
   seeded?: boolean;
   /** Ежедневный чек-лист здоровья. */

@@ -1,4 +1,4 @@
-# Публикация серверных функций assistant (разбор голоса) и gcal (Google Календарь) в Supabase.
+# Публикация серверных функций assistant (разбор голоса), speech (распознавание речи) и gcal (Google Календарь) в Supabase.
 # Нужны секреты репозитория SUPABASE_ACCESS_TOKEN и SUPABASE_PROJECT_REF (см. README).
 name: Сервер Supabase
 
@@ -21,7 +21,7 @@ jobs:
         with:
           deno-version: v2.x
       - name: Проверка кода функций
-        run: deno check --config supabase/functions/deno.json supabase/functions/assistant/index.ts supabase/functions/gcal/index.ts
+        run: deno check --config supabase/functions/deno.json supabase/functions/assistant/index.ts supabase/functions/speech/index.ts supabase/functions/gcal/index.ts
       - uses: supabase/setup-cli@v1
         with:
           version: latest
@@ -31,6 +31,6 @@ jobs:
             echo "Секреты SUPABASE_ACCESS_TOKEN и SUPABASE_PROJECT_REF не заданы — пропускаем публикацию."
             exit 0
           fi
-          for f in assistant gcal; do
+          for f in assistant speech gcal; do
             supabase functions deploy "$f" --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt --use-api
           done

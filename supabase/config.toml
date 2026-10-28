@@ -6,3 +6,6 @@ verify_jwt = false
 [functions.gcal]
 # Google возвращает пользователя на эту функцию без токена входа, поэтому проверка внутри.
 verify_jwt = false
+
+[functions.speech]
+verify_jwt = false

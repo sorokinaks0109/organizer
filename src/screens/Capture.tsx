@@ -18,10 +18,12 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   const [items, setItems] = useState<Parsed[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const textRef = useRef(text); textRef.current = text;
-  const dict = useDictation((t) => setText((cur) => (cur ? cur.replace(/\s*$/, ' ') : '') + t));
+  // Текст держим и в ref: после остановки записи разбор должен получить всё распознанное, не дожидаясь перерисовки.
+  const textRef = useRef(text);
+  const setBoth = (t: string) => { textRef.current = t; setText(t); };
+  const dict = useDictation((t) => setBoth((textRef.current ? textRef.current.replace(/\s*$/, ' ') : '') + t), store.settings.voice ?? 'yandex');
 
-  const close = () => { dict.stop(); setText(''); setItems(null); setErr(null); onClose(); };
+  const close = () => { dict.stop(); setBoth(''); setItems(null); setErr(null); onClose(); };
 
   const parse = async (t = text) => {
     if (!t.trim()) return;
@@ -35,8 +37,8 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
     finally { setBusy(false); }
   };
 
-  const toggleMic = () => {
-    if (dict.listening) { dict.stop(); setTimeout(() => parse(textRef.current), 700); }
+  const toggleMic = async () => {
+    if (dict.listening) { await dict.stop(); parse(textRef.current); }
     else { setItems(null); dict.start(); }
   };
 
@@ -59,12 +61,12 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
         {dict.listening ? 'Говори. Нажми ещё раз, когда закончишь — разберу сама.' : 'Нажми и говори как есть: «поставь мне и Мите в календарь…», «к среде отчёт», «такси 450».'}
       </p>
       {dict.error && <p className="err">{dict.error}</p>}
-      <textarea className="field" rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Или напиши здесь" />
-      {dict.interim && <div className="interim">{dict.interim}</div>}
+      <textarea className="field" rows={3} value={text} onChange={(e) => setBoth(e.target.value)} placeholder="Или напиши здесь" />
+      {(dict.interim || dict.busy) && <div className="interim">{dict.busy ? 'Распознаю…' : dict.interim}</div>}
       {!items && (
         <div className="row">
           <button className="btn primary" type="button" disabled={busy || !text.trim()} onClick={() => parse()}>{busy ? 'Разбираю…' : 'Разобрать'}</button>
-          {text && <button className="btn ghost" type="button" onClick={() => setText('')}>Очистить</button>}
+          {text && <button className="btn ghost" type="button" onClick={() => setBoth('')}>Очистить</button>}
         </div>
       )}
       {err && <p className="err">{err}</p>}

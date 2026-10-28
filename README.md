@@ -68,6 +68,12 @@
 
 Переключаться можно в любой момент, меняя `AI_PROVIDER`.
 
+**Распознавание речи (Yandex SpeechKit).** Тот же ключ YandexGPT подходит и для распознавания, если:
+- сервисному аккаунту добавлена роль `ai.speechkit-stt.user` (каталог → Права доступа);
+- у API-ключа есть область `yc.ai.speechkitStt.execute` (вместе с `yc.ai.languageModels.execute`; область у готового ключа не меняется — создай новый ключ с обеими и замени `YANDEX_API_KEY`).
+
+Без этого в приложении: Настройки → Голос → «Браузер».
+
 ### 4. Google Календарь
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → создай проект `Organizer`.

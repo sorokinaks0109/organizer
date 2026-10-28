@@ -49,3 +49,13 @@ describe('склейка распознанной фразы', () => {
     expect(phraseText(['такси 342', ' и кофе'])).toBe('такси 342 и кофе');
   });
 });
+
+import { toPcm16 } from '../src/lib/voice';
+describe('звук для SpeechKit', () => {
+  it('переводит 48 кГц в 16 кГц, 16 бит', () => {
+    const input = new Float32Array(4800).fill(0.5);
+    const out = toPcm16(input, 48000);
+    expect(out.length).toBe(1600);
+    expect(out[0]).toBe(Math.floor(0.5 * 0x7fff));
+  });
+});
