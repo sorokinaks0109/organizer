@@ -38,6 +38,8 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   });
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
   const okD = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  // Траты и доходы не бывают в будущем: если нейросеть перенесла на них дату события — ставим сегодня.
+  const pastD = (v: unknown) => { const x = okD(v); return x && x <= todayIso() ? x : null; };
   const okT = (v: unknown) => (typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : null);
   const area = (v: unknown) => (typeof v === 'string' && ids.has(v) ? v : preferArea ?? null);
   const proj = (v: unknown) => (typeof v === 'string' && pids.has(v) ? v : null);
@@ -50,11 +52,11 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
     if (t === 'task') out.push({ type: 'task', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date), time: okT(raw.time), calendar: !!raw.calendar, people: ppl(raw.people), remind: (raw.remind as string) ?? null });
     else if (t === 'event' && raw.title && okD(raw.date)) out.push({ type: 'event', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date)!, start: okT(raw.start), end: okT(raw.end), repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(raw.repeat as string) ? (raw.repeat as string) : null, remind: ['hour', 'day', 'week', 'none'].includes(raw.remind as string) ? (raw.remind as string) : null, people: ppl(raw.people) });
     else if (t === 'note') out.push({ type: 'note', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id) });
-    else if (t === 'expense' && Number(raw.amount) > 0) out.push({ type: 'expense', what: String(raw.what || 'Без названия'), amount: Math.round(Number(raw.amount)), category: String(raw.category || 'Прочее'), wb: !!raw.wb, date: okD(raw.date) });
+    else if (t === 'expense' && Number(raw.amount) > 0) out.push({ type: 'expense', what: String(raw.what || 'Без названия'), amount: Math.round(Number(raw.amount)), category: String(raw.category || 'Прочее'), wb: !!raw.wb, date: pastD(raw.date) });
     else if (t === 'income' && Number(raw.amount) > 0) {
       const source = INCOME_SOURCES.includes(raw.source as string) ? (raw.source as string) : 'Прочее';
       const target = raw.target === 'reserve' || raw.target === 'wish' ? raw.target : source === 'Отпускные' ? 'reserve' : 'live';
-      out.push({ type: 'income', what: String(raw.what || 'Доход'), amount: Math.round(Number(raw.amount)), source, date: okD(raw.date), target, wish_id: null });
+      out.push({ type: 'income', what: String(raw.what || 'Доход'), amount: Math.round(Number(raw.amount)), source, date: pastD(raw.date), target, wish_id: null });
     } else if (t === 'wish') out.push({ type: 'wish', title: String(raw.title), area_id: area(raw.area_id), target_sum: Number(raw.target_sum) > 0 ? Math.round(Number(raw.target_sum)) : null });
     else if (t === 'paid') {
       const row = payments.find((r) => r.id === raw.row_id);
@@ -78,9 +80,10 @@ export async function markHealth(store: Store, item_id: string, value: number, d
 
 /** Сохраняет разобранные записи. Возвращает текст для всплывающего сообщения. */
 export async function saveParsed(list: Parsed[], store: Store): Promise<string> {
-  let saved = 0; const problems: string[] = [];
+  let saved = 0; const problems: string[] = []; const done: string[] = [];
   const emails = (ids?: string[]) => (ids || []).map((id) => store.people.find((p) => p.id === id)?.email).filter((x): x is string => !!x);
   for (const p of list) {
+    const before = saved;
     try {
       if (p.type === 'task' || p.type === 'note') {
         const row = await store.insert('items', { kind: p.type, title: p.title, area_id: p.area_id, project_id: p.project_id, due_date: p.type === 'task' ? p.date : null, due_time: p.type === 'task' ? p.time : null });
@@ -109,7 +112,9 @@ export async function saveParsed(list: Parsed[], store: Store): Promise<string> 
         const cur = store.health_log.find((x) => x.day === todayIso() && x.item_id === p.item_id)?.value || 0;
         await markHealth(store, p.item_id, h?.kind === 'count' ? cur + p.value : 1); saved++;
       }
+      if (saved > before) done.push(p.type === 'expense' ? `трата ${p.amount} ₽` : p.type === 'income' ? `доход ${p.amount} ₽` : p.type === 'event' ? 'событие в календарь' : p.type === 'paid' ? `оплачено: ${p.name}` : p.type === 'health' ? 'отметка здоровья' : p.type === 'note' ? 'заметка' : p.type === 'wish' ? 'желание' : 'дело');
     } catch (e) { problems.push(`${parsedLabel(p)}: ${(e as Error).message}`); }
   }
-  return problems.length ? `Сохранено: ${saved}. Не вышло: ${problems.join('; ')}` : `Сохранено: ${saved}`;
+  const ok = done.length ? `Сохранено: ${done.join(', ')}` : 'Ничего не сохранено';
+  return problems.length ? `${ok}. Не вышло: ${problems.join('; ')}` : ok;
 }
