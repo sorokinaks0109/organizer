@@ -2,7 +2,12 @@ export type Color = 'blue' | 'navy' | 'red' | 'green' | 'teal' | 'orange' | 'bro
 export const COLORS: Color[] = ['blue', 'red', 'purple', 'green', 'orange', 'teal', 'brown', 'navy', 'pink', 'gray'];
 
 export type Area = { id: string; name: string; color: Color; keywords: string[]; sort: number };
-export type Project = { id: string; area_id: string | null; name: string; goal: string | null; due_date: string | null; done: boolean; keywords: string[]; sort: number };
+export type ProjectStatus = 'idea' | 'active' | 'wait' | 'done';
+export type Project = { id: string; area_id: string | null; name: string; goal: string | null; due_date: string | null; done: boolean; keywords: string[]; sort: number; status?: ProjectStatus; note?: string | null; status_at?: string };
+export const PROJECT_STATUS: Record<ProjectStatus, { name: string; color: Color }> = {
+  idea: { name: 'Идея', color: 'purple' }, active: { name: 'В работе', color: 'blue' }, wait: { name: 'Жду / пауза', color: 'orange' }, done: { name: 'Готово', color: 'green' },
+};
+export const statusOf = (p: Project): ProjectStatus => p.status ?? (p.done ? 'done' : 'active');
 export type FileRef = { path: string; name: string; type: string };
 export type Item = {
   id: string; kind: 'task' | 'note'; title: string; body: string | null; area_id: string | null; project_id: string | null;
@@ -26,8 +31,8 @@ export type Settings = {
   spendCats?: string[];
   planCats?: string[];
   autoSave?: boolean;
-  /** Чем распознавать речь: Yandex SpeechKit (точнее) или встроенным распознаванием браузера. */
-  voice?: 'yandex' | 'browser';
+  /** Чем диктовать: микрофоном клавиатуры (по умолчанию, точнее всего), Yandex SpeechKit или распознаванием браузера. */
+  voice?: 'keyboard' | 'yandex' | 'browser';
   /** Сферы по умолчанию уже созданы при первом входе. */
   seeded?: boolean;
   /** Ежедневный чек-лист здоровья. */
@@ -50,6 +55,8 @@ export type Parsed =
   | { type: 'income'; what: string; amount: number; source: string; date: string | null; target?: 'live' | 'reserve' | 'wish'; wish_id?: string | null }
   | { type: 'health'; item_id: string; value: number }
   | { type: 'paid'; row_id: string; name: string; amount: number }
+  | { type: 'project'; title: string; area_id: string | null; status: ProjectStatus; note: string | null }
+  | { type: 'project_update'; project_id: string; was: string; status: ProjectStatus | null; note: string | null }
   | { type: 'event_update'; event_id: string; calendarId: string; was: string; title: string | null; date: string | null; start: string | null; end: string | null }
   | { type: 'event_delete'; event_id: string; calendarId: string; was: string }
   | { type: 'task_update'; item_id: string; was: string; title: string | null; date: string | null; time: string | null; done: boolean | null }

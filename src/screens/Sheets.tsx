@@ -11,6 +11,7 @@ import { Chip, Sheet, useToast } from '../components/ui';
 
 export function ItemSheet({ item, preset, onClose }: { item: Item | null; preset?: Partial<Item>; onClose: () => void }) {
   const store = useStore();
+  const { go } = useApp();
   const toast = useToast();
   const isNew = !item;
   const base = item ?? ({ kind: 'task', title: '', body: null, area_id: null, project_id: null, due_date: null, due_time: null, files: [], ...preset } as Item);
@@ -81,6 +82,11 @@ export function ItemSheet({ item, preset, onClose }: { item: Item | null; preset
       {msg && <span className="err">{msg}</span>}
       <div className="row">
         <button className="btn primary" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняю…' : isNew ? 'Добавить' : 'Сохранить'}</button>
+        {!isNew && kind === 'task' && !item!.project_id && <button className="btn" type="button" onClick={async () => {
+          // Дело оказалось проектом: создаём проект с этим названием, подробности — в «где сейчас».
+          const r = await store.insert('projects', { name: title.trim() || item!.title, area_id: area, status: 'active', note: body.trim() || null, keywords: [], sort: store.projects.length });
+          if (r) { await store.remove('items', { id: item!.id }); toast('Теперь это проект'); onClose(); if (area) go({ name: 'area', id: area, project: r.id }); }
+        }}>Сделать проектом</button>}
         <span style={{ flex: 1 }} />
         {!isNew && <button className="btn ghost danger" type="button" onClick={async () => { await store.remove('items', { id: item!.id }); toast('Удалено'); onClose(); }}>Удалить</button>}
       </div>

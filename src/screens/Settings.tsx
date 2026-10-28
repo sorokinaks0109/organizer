@@ -82,12 +82,13 @@ export function Settings() {
 
       <div className="card">
         <div className="card-t">Голос</div>
-        <span className="lbl-t">Распознавание речи</span>
+        <span className="lbl-t">Чем диктовать</span>
         <div className="chips">
-          <button type="button" className="chip" aria-pressed={(store.settings.voice ?? 'yandex') === 'yandex'} onClick={() => store.saveSettings({ voice: 'yandex' })}>Yandex SpeechKit</button>
+          <button type="button" className="chip" aria-pressed={(store.settings.voice ?? 'keyboard') === 'keyboard'} onClick={() => store.saveSettings({ voice: 'keyboard' })}>Микрофон клавиатуры</button>
+          <button type="button" className="chip" aria-pressed={store.settings.voice === 'yandex'} onClick={() => store.saveSettings({ voice: 'yandex' })}>Yandex SpeechKit</button>
           <button type="button" className="chip" aria-pressed={store.settings.voice === 'browser'} onClick={() => store.saveSettings({ voice: 'browser' })}>Браузер</button>
         </div>
-        <span className="mini">SpeechKit точнее понимает русскую речь, текст появляется после каждой паузы. Браузер — запасной вариант, если SpeechKit не настроен.</span>
+        <span className="mini">Микрофон клавиатуры распознаёт лучше всего: открывается поле, нажимаешь 🎙 на клавиатуре и говоришь. Другие два варианта — своя кнопка записи в приложении.</span>
         <label className="toggle-row">
           <input type="checkbox" className="check" checked={!!store.settings.autoSave} onChange={(e) => store.saveSettings({ autoSave: e.target.checked })} />
           <span>Сохранять сразу, без проверки<br /><small className="mini">Если выключено — сначала покажу, что разобрала, и можно поправить.</small></span>

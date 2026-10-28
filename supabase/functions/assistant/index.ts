@@ -7,7 +7,7 @@ type Ctx = {
   text: string;
   today: string;
   weekday: string;
-  areas: { id: string; name: string; keywords?: string[]; projects?: { id: string; name: string }[] }[];
+  areas: { id: string; name: string; keywords?: string[]; projects?: { id: string; name: string; status?: string }[] }[];
   people: { id: string; name: string }[];
   spendCats: string[];
   incomeSources: string[];
@@ -18,7 +18,7 @@ type Ctx = {
 };
 
 function systemPrompt(c: Ctx): string {
-  const areas = c.areas.map((a) => `- ${a.id}: ${a.name}${a.keywords?.length ? ` (подсказки: ${a.keywords.join(', ')})` : ''}${a.projects?.length ? `\n  проекты: ${a.projects.map((p) => `${p.id}: ${p.name}`).join('; ')}` : ''}`).join('\n');
+  const areas = c.areas.map((a) => `- ${a.id}: ${a.name}${a.keywords?.length ? ` (подсказки: ${a.keywords.join(', ')})` : ''}${a.projects?.length ? `\n  проекты: ${a.projects.map((p) => `${p.id}: ${p.name}${p.status ? ` [${p.status}]` : ''}`).join('; ')}` : ''}`).join('\n');
   const people = c.people.map((p) => `- ${p.id}: ${p.name}`).join('\n') || '- нет';
   const health = (c.health || []).map((h) => `- ${h.id}: ${h.name}${h.kind === 'count' ? ' (считается штуками)' : ''}`).join('\n') || '- нет';
   const payments = (c.payments || []).map((p) => `- ${p.id}: ${p.name}, ${p.sum} ₽`).join('\n') || '- нет';
@@ -41,6 +41,8 @@ ${people}
 - income — полученные деньги (премия, оплата заказа, подарок). Источники: ${c.incomeSources.join(', ')}. Аванс и зарплату как income не записывай.
 - wish — желание, мечта, «хочу когда-нибудь».
 - paid — пользователь оплатил платёж из своего плана («оплатила ТСЖ», «заплатила за интернет 1050»). row_id — из списка ниже; amount — если названа сумма, иначе null. Если такого платежа в списке нет, это expense.
+- project — новый проект в сфере («добавь проекты: приложение по русскому, мультик на заказ» — каждый отдельной записью). status: "idea" | "active" | "wait" | "done", по умолчанию "active".
+- project_update — статус или заметка существующего проекта из списка («по приложению по русскому: доделываю слова», «мультик на паузе, жду ответ заказчика», «блог готов»). status: "idea" | "active" | "wait" | "done" или null, note — коротко где сейчас, или null.
 - event_update — исправить, переименовать или перенести СУЩЕСТВУЮЩЕЕ событие календаря («исправь», «перенеси», «поменяй время», «переименуй»). event_id — из списка событий ниже. В title, date, start, end указывай только то, что меняется, остальное null.
 - event_delete — удалить существующее событие («удали», «убери из календаря», «встречу отменили»). event_id — из списка.
 - task_update — изменить существующее дело: перенести (date, time), переименовать (title) или отметить сделанным («сделала…», «готово…» → done: true). item_id — из списка дел.
@@ -82,6 +84,8 @@ ${health}
  {"type":"expense","what":"...","amount":число,"category":"...","wb":false,"date":"YYYY-MM-DD"|null},
  {"type":"income","what":"...","amount":число,"source":"...","date":"YYYY-MM-DD"|null,"target":"live"},
  {"type":"paid","row_id":"id","amount":число|null},
+ {"type":"project","title":"...","area_id":"id"|null,"status":"active","note":null},
+ {"type":"project_update","project_id":"id","status":"wait"|null,"note":"..."|null},
  {"type":"event_update","event_id":"id","title":"..."|null,"date":"YYYY-MM-DD"|null,"start":"HH:MM"|null,"end":"HH:MM"|null},
  {"type":"event_delete","event_id":"id"},
  {"type":"task_update","item_id":"id","title":"..."|null,"date":"YYYY-MM-DD"|null,"time":"HH:MM"|null,"done":true|null},

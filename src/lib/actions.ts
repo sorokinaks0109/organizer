@@ -2,7 +2,7 @@
 import { callFn } from './supabase';
 import { periodOf } from './money';
 import { addIncome, monthOrNew, payRow } from './moneyActions';
-import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Parsed } from './types';
+import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, PROJECT_STATUS, type Parsed, type ProjectStatus } from './types';
 import { addDays, iso, MON_SHORT, parseIso, todayIso, WD_FULL } from './dates';
 import type { CalEvent } from './gcal';
 import type { useStore } from './store';
@@ -19,7 +19,7 @@ function openPayments(store: Store) {
 /** Подпись записи для сообщений: название дела, трата, платёж или пункт здоровья. */
 export function parsedLabel(p: Parsed): string {
   return p.type === 'health' ? 'отметка здоровья' : p.type === 'paid' ? p.name : p.type === 'expense' || p.type === 'income' ? p.what
-    : p.type === 'event_update' || p.type === 'event_delete' || p.type === 'task_update' ? p.was : p.title;
+    : p.type === 'event_update' || p.type === 'event_delete' || p.type === 'task_update' || p.type === 'project_update' ? p.was : p.title;
 }
 const shortDay = (d: string) => { const x = parseIso(d); return `${x.getDate()} ${MON_SHORT[x.getMonth()]}`; };
 
@@ -36,7 +36,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const res = await callFn<{ items: Parsed[] }>('assistant', {
     text: preferArea ? `${text}\n\n(Записано внутри сферы «${areas.find((a) => a.id === preferArea)?.name}» — если не сказано иное, клади туда.)` : text,
     today: todayIso(), weekday: WD_FULL[d.getDay()],
-    areas: ordered.map((a) => ({ id: a.id, name: a.name, keywords: a.keywords, projects: projects.filter((p) => p.area_id === a.id && !p.done).map((p) => ({ id: p.id, name: p.name })) })),
+    areas: ordered.map((a) => ({ id: a.id, name: a.name, keywords: a.keywords, projects: projects.filter((p) => p.area_id === a.id && !p.done).map((p) => ({ id: p.id, name: p.name, status: PROJECT_STATUS[p.status ?? 'active'].name })) })),
     people: people.map((p) => ({ id: p.id, name: p.name })),
     spendCats: settings.spendCats?.length ? settings.spendCats : DEFAULT_SPEND_CATS,
     incomeSources: INCOME_SOURCES,
@@ -48,6 +48,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
   const okD = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
   // Траты и доходы не бывают в будущем: если нейросеть перенесла на них дату события — ставим сегодня.
+  const okS = (v: unknown) => (typeof v === 'string' && v in PROJECT_STATUS ? (v as ProjectStatus) : null);
   const pastD = (v: unknown) => { const x = okD(v); return x && x <= todayIso() ? x : null; };
   const okT = (v: unknown) => (typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : null);
   const area = (v: unknown) => (typeof v === 'string' && ids.has(v) ? v : preferArea ?? null);
@@ -79,6 +80,12 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
         const u = { title: raw.title && raw.title !== e.title ? String(raw.title) : null, date: okD(raw.date) !== e.day ? okD(raw.date) : null, start: okT(raw.start) !== e.time ? okT(raw.start) : null, end: okT(raw.end) };
         if (u.title || u.date || u.start || u.end) out.push({ type: 'event_update', event_id: e.id, calendarId: e.calendarId, was, ...u });
       }
+    } else if (t === 'project' && raw.title) {
+      out.push({ type: 'project', title: String(raw.title), area_id: area(raw.area_id), status: okS(raw.status) ?? 'active', note: raw.note ? String(raw.note) : null });
+    } else if (t === 'project_update') {
+      const pr = projects.find((x) => x.id === raw.project_id);
+      const u = { status: okS(raw.status), note: raw.note ? String(raw.note) : null };
+      if (pr && (u.status || u.note)) out.push({ type: 'project_update', project_id: pr.id, was: pr.name, ...u });
     } else if (t === 'task_update') {
       const it = openTasks.find((x) => x.id === raw.item_id);
       if (!it) continue;
@@ -135,6 +142,10 @@ export async function saveParsed(list: Parsed[], store: Store): Promise<string> 
       } else if (p.type === 'event_delete') {
         await callFn('gcal', { action: 'delete', id: p.event_id, calendarId: p.calendarId });
         await store.remove('event_links', { event_id: p.event_id }); saved++;
+      } else if (p.type === 'project') {
+        await store.insert('projects', { name: p.title, area_id: p.area_id, status: p.status, done: p.status === 'done', note: p.note, keywords: [], sort: store.projects.length }); saved++;
+      } else if (p.type === 'project_update') {
+        await store.update('projects', { id: p.project_id }, { ...(p.status ? { status: p.status, done: p.status === 'done' } : {}), ...(p.note ? { note: p.note } : {}), status_at: new Date().toISOString() }); saved++;
       } else if (p.type === 'task_update') {
         await store.update('items', { id: p.item_id }, {
           ...(p.title ? { title: p.title } : {}), ...(p.date ? { due_date: p.date } : {}), ...(p.time ? { due_time: p.time } : {}),
@@ -145,7 +156,7 @@ export async function saveParsed(list: Parsed[], store: Store): Promise<string> 
         const cur = store.health_log.find((x) => x.day === todayIso() && x.item_id === p.item_id)?.value || 0;
         await markHealth(store, p.item_id, h?.kind === 'count' ? cur + p.value : 1); saved++;
       }
-      if (saved > before) done.push(p.type === 'expense' ? `трата ${p.amount} ₽` : p.type === 'income' ? `доход ${p.amount} ₽` : p.type === 'event' ? 'событие в календарь' : p.type === 'paid' ? `оплачено: ${p.name}` : p.type === 'health' ? 'отметка здоровья' : p.type === 'note' ? 'заметка' : p.type === 'wish' ? 'желание' : p.type === 'event_update' ? 'событие изменено' : p.type === 'event_delete' ? 'событие удалено' : p.type === 'task_update' ? (p.done ? 'дело сделано' : 'дело изменено') : 'дело');
+      if (saved > before) done.push(p.type === 'expense' ? `трата ${p.amount} ₽` : p.type === 'income' ? `доход ${p.amount} ₽` : p.type === 'event' ? 'событие в календарь' : p.type === 'paid' ? `оплачено: ${p.name}` : p.type === 'health' ? 'отметка здоровья' : p.type === 'note' ? 'заметка' : p.type === 'wish' ? 'желание' : p.type === 'event_update' ? 'событие изменено' : p.type === 'event_delete' ? 'событие удалено' : p.type === 'task_update' ? (p.done ? 'дело сделано' : 'дело изменено') : p.type === 'project' ? `проект «${p.title}»` : p.type === 'project_update' ? `статус «${p.was}»` : 'дело');
     } catch (e) { problems.push(`${parsedLabel(p)}: ${(e as Error).message}`); }
   }
   const ok = done.length ? `Сохранено: ${done.join(', ')}` : 'Ничего не сохранено';

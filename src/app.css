@@ -183,3 +183,17 @@ label.btn { cursor: pointer; }
 .target button { border: 2px solid var(--line); background: var(--surface); border-radius: 14px; padding: 11px 12px; text-align: left; font-size: 15px; display: flex; flex-direction: column; gap: 2px; }
 .target button small { color: var(--muted); font-size: 13px; }
 .target button[aria-pressed="true"] { border-color: var(--accent); }
+
+/* ——— проекты со статусами ——— */
+.pcards { display: flex; flex-direction: column; gap: 8px; }
+.pcard { background: var(--field); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
+.pcard-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.pcard-h b { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.pnote { font-size: 14.5px; overflow-wrap: anywhere; }
+.spill { position: relative; flex: none; display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 4px 10px; font-size: 12.5px; font-weight: 600; background: var(--sp); color: var(--sd); cursor: pointer; }
+.spill::after { content: "▾"; font-size: 10px; }
+.spill select { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.pstatus { background: rgba(255,255,255,.55); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.pstatus .field { background: var(--surface); }
+.kbd-hint { margin: 0; font-size: 15px; color: var(--muted); line-height: 1.45; }
+.kbd-hint b { color: var(--ink); font-weight: 600; }

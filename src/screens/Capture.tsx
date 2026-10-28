@@ -5,10 +5,10 @@ import { useApp } from '../lib/context';
 import { useDictation } from '../lib/voice';
 import { parsedLabel, parseVoice, saveParsed } from '../lib/actions';
 import { fmtDate, money, parseIso, MON } from '../lib/dates';
-import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Parsed } from '../lib/types';
+import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, PROJECT_STATUS, type Parsed, type ProjectStatus } from '../lib/types';
 import { Icon, Sheet, useToast } from '../components/ui';
 
-const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание', paid: 'Платёж оплачен', health: 'Здоровье', event_update: 'Изменить событие', event_delete: 'Удалить событие', task_update: 'Изменить дело' };
+const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание', paid: 'Платёж оплачен', health: 'Здоровье', event_update: 'Изменить событие', event_delete: 'Удалить событие', task_update: 'Изменить дело', project: 'Новый проект', project_update: 'Статус проекта' };
 const REPEAT: Record<string, string> = { DAILY: 'каждый день', WEEKLY: 'каждую неделю', MONTHLY: 'каждый месяц', YEARLY: 'каждый год' };
 const REMIND: Record<string, string> = { hour: 'за час', day: 'за день', week: 'за неделю', none: 'без напоминания' };
 
@@ -23,7 +23,9 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   // Текст держим и в ref: после остановки записи разбор должен получить всё распознанное, не дожидаясь перерисовки.
   const textRef = useRef(text);
   const setBoth = (t: string) => { textRef.current = t; setText(t); };
-  const dict = useDictation((t) => setBoth((textRef.current ? textRef.current.replace(/\s*$/, ' ') : '') + t), store.settings.voice ?? 'yandex');
+  const dict = useDictation((t) => setBoth((textRef.current ? textRef.current.replace(/\s*$/, ' ') : '') + t), store.settings.voice === 'browser' ? 'browser' : 'yandex');
+  // По умолчанию диктуем микрофоном клавиатуры: на телефоне он распознаёт русский лучше всего.
+  const keyboard = (store.settings.voice ?? 'keyboard') === 'keyboard';
 
   const close = () => { dict.stop(); setBoth(''); setItems(null); setErr(null); onClose(); };
 
@@ -59,14 +61,20 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   return (
     <Sheet open={open} onClose={close}>
       <h3>Что записать?</h3>
-      <button className={'mic' + (dict.listening ? ' on' : '')} type="button" aria-label={dict.listening ? 'Остановить запись' : 'Надиктовать'} onClick={toggleMic}>
-        <Icon name={dict.listening ? 'stop' : 'mic'} />
-      </button>
-      <p className="mini" style={{ textAlign: 'center', margin: 0 }}>
-        {dict.listening ? 'Говори. Нажми ещё раз, когда закончишь — разберу сама.' : 'Нажми и говори как есть: «поставь мне и Мите в календарь…», «к среде отчёт», «такси 450».'}
-      </p>
-      {dict.error && <p className="err">{dict.error}</p>}
-      <textarea className="field" rows={3} value={text} onChange={(e) => setBoth(e.target.value)} placeholder="Или напиши здесь" />
+      {keyboard ? (
+        <p className="kbd-hint">Нажми <b>🎙 на клавиатуре</b> и говори как есть: «поставь мне и Мите в пятницу кино», «к среде отчёт», «такси 342», «перенеси стоматолога на четверг».</p>
+      ) : (
+        <>
+          <button className={'mic' + (dict.listening ? ' on' : '')} type="button" aria-label={dict.listening ? 'Остановить запись' : 'Надиктовать'} onClick={toggleMic}>
+            <Icon name={dict.listening ? 'stop' : 'mic'} />
+          </button>
+          <p className="mini" style={{ textAlign: 'center', margin: 0 }}>
+            {dict.listening ? 'Говори. Нажми ещё раз, когда закончишь — разберу сама.' : 'Нажми и говори как есть: «поставь мне и Мите в календарь…», «к среде отчёт», «такси 450».'}
+          </p>
+          {dict.error && <p className="err">{dict.error}</p>}
+        </>
+      )}
+      <textarea className="field" rows={keyboard ? 4 : 3} autoFocus={keyboard && !items} value={text} onChange={(e) => setBoth(e.target.value)} placeholder={keyboard ? 'Здесь появится текст. Можно и напечатать.' : 'Или напиши здесь'} />
       {(dict.interim || dict.busy) && <div className="interim">{dict.busy ? 'Распознаю…' : dict.interim}</div>}
       {!items && (
         <div className="row">
@@ -93,6 +101,26 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
   const { areas, projects, people, settings, wishes } = useStore();
   const title = parsedLabel(p);
   const editable = p.type !== 'paid' && p.type !== 'health';
+  if (p.type === 'project_update') {
+    return (
+      <div className="pv-card">
+        <div className="pv-top">
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+            <span className="pv-type">{TYPE_NAME[p.type]}</span>
+            <b style={{ fontSize: 15.5, overflowWrap: 'anywhere' }}>{p.was}</b>
+          </div>
+          <button className="x" type="button" aria-label="Убрать" onClick={onRemove}>×</button>
+        </div>
+        <div className="pv-row">
+          <select aria-label="Статус" value={p.status ?? ''} onChange={(e) => onChange({ status: (e.target.value || null) as ProjectStatus | null } as Partial<Parsed>)}>
+            <option value="">статус без изменений</option>
+            {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((k) => <option key={k} value={k}>{PROJECT_STATUS[k].name}</option>)}
+          </select>
+        </div>
+        <input value={p.note ?? ''} placeholder="Где сейчас (если меняется)" aria-label="Где сейчас" style={{ border: 0, background: 'var(--surface)', borderRadius: 10, padding: '9px 10px', fontSize: 15 }} onChange={(e) => onChange({ note: e.target.value || null } as Partial<Parsed>)} />
+      </div>
+    );
+  }
   if (p.type === 'event_update' || p.type === 'event_delete' || p.type === 'task_update') {
     const isTask = p.type === 'task_update';
     return (
@@ -126,7 +154,7 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
       {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
     </select>
   );
-  const projOpts = 'project_id' in p ? projects.filter((x) => !x.done && (!p.area_id || x.area_id === p.area_id)) : [];
+  const projOpts = 'project_id' in p && 'area_id' in p ? projects.filter((x) => !x.done && (!p.area_id || x.area_id === p.area_id)) : [];
   const projSel = 'project_id' in p && projOpts.length > 0 && (
     <select aria-label="Проект" value={p.project_id ?? ''} onChange={(e) => onChange({ project_id: e.target.value || null } as Partial<Parsed>)}>
       <option value="">Без проекта</option>
@@ -152,7 +180,15 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
         </div>
         <button className="x" type="button" aria-label="Убрать" onClick={onRemove}>×</button>
       </div>
-      {(p.type === 'task' || p.type === 'note' || p.type === 'event' || p.type === 'wish') && <div className="pv-row">{areaSel}{projSel}</div>}
+      {(p.type === 'task' || p.type === 'note' || p.type === 'event' || p.type === 'wish' || p.type === 'project') && <div className="pv-row">{areaSel}{projSel}</div>}
+      {p.type === 'project' && (
+        <div className="pv-row">
+          <select aria-label="Статус" value={p.status} onChange={(e) => onChange({ status: e.target.value as ProjectStatus } as Partial<Parsed>)}>
+            {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((k) => <option key={k} value={k}>{PROJECT_STATUS[k].name}</option>)}
+          </select>
+          {p.note && <span className="mini">{p.note}</span>}
+        </div>
+      )}
       {p.type === 'task' && (
         <div className="pv-row">
           <input type="date" aria-label="Срок" value={p.date ?? ''} onChange={(e) => onChange({ date: e.target.value || null })} />

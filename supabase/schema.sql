@@ -122,6 +122,11 @@ alter table incomes add column if not exists target text not null default 'live'
 alter table incomes add column if not exists plan_ref text;
 alter table incomes add column if not exists wish_id uuid references wishes on delete set null;
 
+-- Статус проекта: идея, в работе, жду/пауза, готово — и короткая заметка «где сейчас».
+alter table projects add column if not exists status text not null default 'active';
+alter table projects add column if not exists note text;
+alter table projects add column if not exists status_at timestamptz not null default now();
+
 -- Ежедневный чек-лист здоровья: витамины, вода, сон. Одна строка — один пункт за один день.
 create table if not exists health_log (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,

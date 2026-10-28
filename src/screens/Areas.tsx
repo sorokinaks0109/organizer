@@ -4,10 +4,11 @@ import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM, type CalEvent } from '../lib/gcal';
 import { fmtDate, todayIso, iso, addDays } from '../lib/dates';
-import { COLORS, type Area, type Color, type Project } from '../lib/types';
+import { COLORS, PROJECT_STATUS, statusOf, type Area, type Color, type Project, type ProjectStatus } from '../lib/types';
 import { Chip, Hero, Icon, Sheet, sc, useToast } from '../components/ui';
 import { EventCard, TaskCard } from '../components/Rows';
 import { HealthCard } from './Health';
+import { ProjectsBlock, ProjectStatusBar } from './Projects';
 
 export function Tiles() {
   const { areas, items, event_links, projects } = useStore();
@@ -79,6 +80,7 @@ export function AreaView({ id, project, tab = 'deals' }: { id: string; project?:
     <>
       <Hero color={a.color} title={curProj ? curProj.name : a.name} onBack={() => (project ? go({ name: 'area', id }) : go({ name: 'today' }))} onMenu={() => (curProj ? setProjSheet(curProj) : setMenu(true))}>
         {curProj?.goal && <span className="mini">Цель: {curProj.goal}</span>}
+        {curProj && <ProjectStatusBar key={curProj.id} p={curProj} />}
         {!project && (
           <div className="projchips">
             <Chip on={!project}>Всё</Chip>
@@ -94,6 +96,7 @@ export function AreaView({ id, project, tab = 'deals' }: { id: string; project?:
       {tab === 'deals' ? (
         <div className="tlist" style={sc(a.color)}>
           {!project && /здоров/i.test(a.name) && <HealthCard />}
+          {!project && <ProjectsBlock areaId={id} />}
           {trainings.length > 0 && <Subscription list={trainings} />}
           {!rows.length && <div className="empty">Дел пока нет. Нажми «+» и надиктуй — дело само попадёт сюда.{a.keywords.length ? ` События календаря со словами «${a.keywords.join('», «')}» тоже показываются здесь.` : ''}</div>}
           {rows.map((r) => r.n)}
@@ -184,9 +187,12 @@ export function ProjectSheet({ open, project, areaId, onClose }: { open: boolean
   const [goal, setGoal] = useState(project?.goal || '');
   const [due, setDue] = useState(project?.due_date || '');
   const [words, setWords] = useState((project?.keywords || []).join(', '));
+  const [status, setStatus] = useState<ProjectStatus>(project ? statusOf(project) : 'active');
+  const [note, setNote] = useState(project?.note || '');
   const save = async () => {
     const n = name.trim(); if (!n) return;
-    const patch = { name: n, goal: goal.trim() || null, due_date: due || null, keywords: words.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean) };
+    const changed = !project || statusOf(project) !== status || (project.note || '') !== note.trim();
+    const patch = { name: n, goal: goal.trim() || null, due_date: due || null, keywords: words.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean), status, done: status === 'done', note: note.trim() || null, ...(changed ? { status_at: new Date().toISOString() } : {}) };
     if (project) await store.update('projects', { id: project.id }, patch);
     else { const r = await store.insert('projects', { ...patch, area_id: areaId, sort: store.projects.length }); if (r) go({ name: 'area', id: areaId, project: r.id }); }
     onClose();
@@ -196,11 +202,13 @@ export function ProjectSheet({ open, project, areaId, onClose }: { open: boolean
       <h3>{project ? 'Проект' : 'Новый проект'}</h3>
       <input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="Например, УПЦ 2027" />
       <input className="field" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="Какой результат нужен (не обязательно)" />
+      <span className="lbl-t">Статус</span>
+      <div className="chips">{(['idea', 'active', 'wait', 'done'] as ProjectStatus[]).map((k) => <button key={k} type="button" className="chip" aria-pressed={status === k} onClick={() => setStatus(k)}>{PROJECT_STATUS[k].name}</button>)}</div>
+      <textarea className="field" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Где сейчас: что сделано, что дальше" />
       <label className="lbl" style={{ flex: 'none' }}>Срок<input className="field" type="date" value={due} onChange={(e) => setDue(e.target.value)} /></label>
       <label className="lbl" style={{ flex: 'none' }}>Слова для событий календаря<input className="field" value={words} onChange={(e) => setWords(e.target.value)} placeholder="упц, показател" /></label>
       <div className="row">
         <button className="btn primary" type="button" onClick={save}>{project ? 'Сохранить' : 'Создать'}</button>
-        {project && <button className="btn" type="button" onClick={async () => { await store.update('projects', { id: project.id }, { done: true }); onClose(); go({ name: 'area', id: areaId }); }}>Проект завершён</button>}
         <span style={{ flex: 1 }} />
         {project && <button className="btn ghost danger" type="button" onClick={async () => { await store.remove('projects', { id: project.id }); onClose(); go({ name: 'area', id: areaId }); }}>Удалить</button>}
       </div>
