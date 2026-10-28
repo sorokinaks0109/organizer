@@ -71,6 +71,15 @@ async function listRange(token: string, calendarId: string, from: string, to: st
   return out.filter((e) => e.status !== 'cancelled');
 }
 
+
+/** Дата и время без часовых поясов: «2026-12-29», «19:00» ± минуты. */
+function shiftLocal(date: string, time: string, minutes: number): { date: string; time: string } {
+  const [y, m, d] = date.split('-').map(Number), [h, mi] = time.split(':').map(Number);
+  const x = new Date(Date.UTC(y, m - 1, d, h, mi + minutes));
+  return { date: x.toISOString().slice(0, 10), time: x.toISOString().slice(11, 16) };
+}
+const plusDays = (date: string, n: number) => shiftLocal(date, '00:00', n * 1440).date;
+
 async function familyCalendarId(userId: string): Promise<string | null> {
   const { data } = await adminClient().from('settings').select('data').eq('user_id', userId).maybeSingle();
   return (data?.data as { familyCalendarId?: string } | undefined)?.familyCalendarId || null;
@@ -174,6 +183,35 @@ Deno.serve(handle(async (req) => {
       };
       const created = await gapi(token, `/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=${e.attendees?.length ? 'all' : 'none'}`, { method: 'POST', body: JSON.stringify(payload) });
       return json({ id: created.id, link: created.htmlLink, calendarId });
+    }
+    case 'update': {
+      // Изменить существующее событие: название, день, время. Остальное (напоминания, участники) не трогаем.
+      const token = await accessToken(userId);
+      const cal = body.calendarId || 'primary';
+      const path = `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(body.id)}`;
+      const cur = await gapi(token, path) as GEvent & { start: { date?: string; dateTime?: string; timeZone?: string }; end: { date?: string; dateTime?: string } };
+      const ch = (body.changes || {}) as { title?: string | null; date?: string | null; start?: string | null; end?: string | null };
+      const tz = body.timeZone || cur.start?.timeZone || 'Europe/Moscow';
+      const patch: Record<string, unknown> = {};
+      if (ch.title) patch.summary = ch.title;
+      if (ch.date || ch.start || ch.end) {
+        if (cur.start?.date && !ch.start) {
+          const days = Math.max(1, Math.round((Date.parse(cur.end.date!) - Date.parse(cur.start.date)) / 864e5));
+          const d = ch.date || cur.start.date;
+          patch.start = { date: d }; patch.end = { date: plusDays(d, days) };
+        } else {
+          const curDate = cur.start?.dateTime?.slice(0, 10) || cur.start?.date || ch.date!;
+          const curTime = cur.start?.dateTime?.slice(11, 16) || '10:00';
+          const dur = cur.start?.dateTime && cur.end?.dateTime ? Math.max(15, Math.round((Date.parse(cur.end.dateTime) - Date.parse(cur.start.dateTime)) / 60000)) : 60;
+          const d = ch.date || curDate, t = ch.start || curTime;
+          const e = ch.end && ch.end > t ? { date: d, time: ch.end } : shiftLocal(d, t, dur);
+          patch.start = { dateTime: `${d}T${t}:00`, timeZone: tz };
+          patch.end = { dateTime: `${e.date}T${e.time}:00`, timeZone: tz };
+        }
+      }
+      if (!Object.keys(patch).length) return json({ ok: true });
+      await gapi(token, `${path}?sendUpdates=${cur.attendees?.length ? 'all' : 'none'}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      return json({ ok: true });
     }
     case 'delete': {
       const token = await accessToken(userId);

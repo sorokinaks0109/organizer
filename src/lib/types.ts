@@ -50,6 +50,9 @@ export type Parsed =
   | { type: 'income'; what: string; amount: number; source: string; date: string | null; target?: 'live' | 'reserve' | 'wish'; wish_id?: string | null }
   | { type: 'health'; item_id: string; value: number }
   | { type: 'paid'; row_id: string; name: string; amount: number }
+  | { type: 'event_update'; event_id: string; calendarId: string; was: string; title: string | null; date: string | null; start: string | null; end: string | null }
+  | { type: 'event_delete'; event_id: string; calendarId: string; was: string }
+  | { type: 'task_update'; item_id: string; was: string; title: string | null; date: string | null; time: string | null; done: boolean | null }
   | { type: 'wish'; title: string; area_id: string | null; target_sum: number | null };
 
 export const DEFAULT_SPEND_CATS = ['Продукты', 'Кафе и доставка', 'Транспорт', 'Красота и уход', 'Одежда и обувь', 'Здоровье', 'Милана', 'Быт и покупки', 'Подарки и помощь', 'Развлечения', 'Прочее'];

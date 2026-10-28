@@ -1,18 +1,20 @@
 // Большая кнопка «+»: надиктовать что угодно, нейросеть разложит по сферам и проектам, в календарь — что нужно.
 import { useRef, useState } from 'react';
 import { useStore } from '../lib/store';
+import { useApp } from '../lib/context';
 import { useDictation } from '../lib/voice';
 import { parsedLabel, parseVoice, saveParsed } from '../lib/actions';
 import { fmtDate, money, parseIso, MON } from '../lib/dates';
 import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Parsed } from '../lib/types';
 import { Icon, Sheet, useToast } from '../components/ui';
 
-const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание', paid: 'Платёж оплачен', health: 'Здоровье' };
+const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание', paid: 'Платёж оплачен', health: 'Здоровье', event_update: 'Изменить событие', event_delete: 'Удалить событие', task_update: 'Изменить дело' };
 const REPEAT: Record<string, string> = { DAILY: 'каждый день', WEEKLY: 'каждую неделю', MONTHLY: 'каждый месяц', YEARLY: 'каждый год' };
 const REMIND: Record<string, string> = { hour: 'за час', day: 'за день', week: 'за неделю', none: 'без напоминания' };
 
 export function Capture({ open, onClose, preferArea }: { open: boolean; onClose: () => void; preferArea?: string | null }) {
   const store = useStore();
+  const { events, refreshEvents } = useApp();
   const toast = useToast();
   const [text, setText] = useState('');
   const [items, setItems] = useState<Parsed[] | null>(null);
@@ -29,13 +31,16 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
     if (!t.trim()) return;
     setBusy(true); setErr(null);
     try {
-      const res = await parseVoice(t, store, preferArea);
+      const res = await parseVoice(t, store, preferArea, events || []);
       if (!res.length) { setErr('Не поняла, что записать. Скажи иначе или допиши руками.'); return; }
-      if (store.settings.autoSave) { toast(await saveParsed(res, store)); close(); return; }
+      if (store.settings.autoSave) { toast(await saveParsed(res, store)); close(); refreshAfter(res); return; }
       setItems(res);
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
+
+  // Изменения в календаре сразу видны на экране, не дожидаясь обновления раз в 10 минут.
+  const refreshAfter = (list: Parsed[]) => { if (list.some((x) => x.type === 'event' || x.type === 'event_update' || x.type === 'event_delete' || (x.type === 'task' && (x.calendar || x.people?.length)))) refreshEvents(); };
 
   const toggleMic = async () => {
     if (dict.listening) { await dict.stop(); parse(textRef.current); }
@@ -46,7 +51,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
     if (!items) return;
     setBusy(true);
     const msg = await saveParsed(items, store);
-    setBusy(false); toast(msg); close();
+    setBusy(false); toast(msg); close(); refreshAfter(items);
   };
 
   const patch = (i: number, p: Partial<Parsed>) => setItems((list) => list!.map((x, j) => (j === i ? ({ ...x, ...p } as Parsed) : x)));
@@ -88,6 +93,33 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
   const { areas, projects, people, settings, wishes } = useStore();
   const title = parsedLabel(p);
   const editable = p.type !== 'paid' && p.type !== 'health';
+  if (p.type === 'event_update' || p.type === 'event_delete' || p.type === 'task_update') {
+    const isTask = p.type === 'task_update';
+    return (
+      <div className="pv-card">
+        <div className="pv-top">
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+            <span className="pv-type">{TYPE_NAME[p.type]}</span>
+            <b style={{ fontSize: 15.5, overflowWrap: 'anywhere' }}>{p.was}</b>
+          </div>
+          <button className="x" type="button" aria-label="Убрать" onClick={onRemove}>×</button>
+        </div>
+        {p.type === 'event_delete' ? <span className="mini">Событие будет удалено из Google Календаря.</span> : (
+          <>
+            <input value={p.title ?? ''} placeholder="Новое название (если меняется)" aria-label="Новое название" style={{ border: 0, background: 'var(--surface)', borderRadius: 10, padding: '9px 10px', fontSize: 16 }}
+              onChange={(e) => onChange({ title: e.target.value || null } as Partial<Parsed>)} />
+            <div className="pv-row">
+              <span className="mini">{isTask ? 'Срок:' : 'Когда:'}</span>
+              <input type="date" aria-label="Новая дата" value={p.date ?? ''} onChange={(e) => onChange({ date: e.target.value || null } as Partial<Parsed>)} />
+              <input type="time" aria-label="Новое время" value={(isTask ? p.time : p.start) ?? ''} onChange={(e) => onChange((isTask ? { time: e.target.value || null } : { start: e.target.value || null }) as Partial<Parsed>)} />
+              {p.type === 'task_update' && p.done && <span className="mini">· отмечу сделанным</span>}
+            </div>
+            <span className="mini">Пустые поля не меняются.</span>
+          </>
+        )}
+      </div>
+    );
+  }
   const areaSel = 'area_id' in p && (
     <select aria-label="Сфера" value={p.area_id ?? ''} onChange={(e) => onChange({ area_id: e.target.value || null, ...('project_id' in p ? { project_id: null } : {}) } as Partial<Parsed>)}>
       <option value="">Без сферы</option>
