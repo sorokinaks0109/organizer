@@ -5,7 +5,7 @@ import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM, type CalEvent } from '../lib/gcal';
 import { fmtDate, todayIso, iso, addDays } from '../lib/dates';
 import { COLORS, PROJECT_STATUS, statusOf, type Area, type Color, type Project, type ProjectStatus } from '../lib/types';
-import { Chip, Hero, Icon, Sheet, sc, useToast } from '../components/ui';
+import { Hero, Icon, Sheet, sc, useToast } from '../components/ui';
 import { EventCard, TaskCard } from '../components/Rows';
 import { HealthCard } from './Health';
 import { ProjectsBlock, ProjectStatusBar } from './Projects';
@@ -54,7 +54,6 @@ export function AreaView({ id, project, tab = 'deals' }: { id: string; project?:
   const [showPast, setShowPast] = useState(false);
   const a = store.areas.find((x) => x.id === id);
   const t = todayIso();
-  const projs = store.projects.filter((p) => p.area_id === id && !p.done);
   const inScope = (area: string | null, proj: string | null) => (project ? proj === project : area === id);
 
   const { tasks, notes, done, gUp, gPast, trainings } = useMemo(() => {
@@ -81,13 +80,6 @@ export function AreaView({ id, project, tab = 'deals' }: { id: string; project?:
       <Hero color={a.color} title={curProj ? curProj.name : a.name} onBack={() => (project ? go({ name: 'area', id }) : go({ name: 'today' }))} onMenu={() => (curProj ? setProjSheet(curProj) : setMenu(true))}>
         {curProj?.goal && <span className="mini">Цель: {curProj.goal}</span>}
         {curProj && <ProjectStatusBar key={curProj.id} p={curProj} />}
-        {!project && (
-          <div className="projchips">
-            <Chip on={!project}>Всё</Chip>
-            {projs.map((p) => <Chip key={p.id} onClick={() => go({ name: 'area', id, project: p.id })}>{p.name}</Chip>)}
-            <Chip onClick={() => setProjSheet('new')}>+ проект</Chip>
-          </div>
-        )}
         <div className="seg">
           <button type="button" role="tab" aria-selected={tab === 'deals'} onClick={() => go({ name: 'area', id, project, tab: 'deals' })}>Дела · {tasks.length + new Set(gUp.map((e) => e.id)).size}</button>
           <button type="button" role="tab" aria-selected={tab === 'notes'} onClick={() => go({ name: 'area', id, project, tab: 'notes' })}>Заметки · {notes.length}</button>
