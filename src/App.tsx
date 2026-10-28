@@ -65,9 +65,12 @@ function Shell() {
   // Возврат после подключения Google.
   useEffect(() => {
     const u = new URL(location.href);
-    if (u.searchParams.get('google') !== 'ok') return;
-    u.searchParams.delete('google');
+    const result = u.searchParams.get('google');
+    if (result !== 'ok' && result !== 'error') return;
+    const reason = u.searchParams.get('reason');
+    u.searchParams.delete('google'); u.searchParams.delete('reason');
     history.replaceState(history.state, '', u.pathname + u.search);
+    if (result === 'error') { toast(`Google Календарь не подключился: ${/client secret/i.test(reason || '') ? 'неверный GOOGLE_CLIENT_SECRET в Supabase' : reason}`); return; }
     toast('Google Календарь подключён');
     g.refresh();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

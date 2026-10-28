@@ -82,9 +82,9 @@ async function oauthCallback(url: URL): Promise<Response> {
   const db = adminClient();
   const { data: st } = await db.from('oauth_states').select('*').eq('state', state || '').maybeSingle();
   if (!code || !st) return new Response('Ссылка устарела. Вернитесь в органайзер и нажмите «Подключить» ещё раз.', { status: 400, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
-  await db.from('oauth_states').delete().eq('state', state);
   const { id, secret } = clientCreds();
   const t = await tokenRequest({ code, client_id: id, client_secret: secret, redirect_uri: redirectUri(), grant_type: 'authorization_code' });
+  await db.from('oauth_states').delete().eq('state', state);
   let email: string | null = null;
   if (t.id_token) { try { email = JSON.parse(atob(t.id_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).email ?? null; } catch { /* имя почты не обязательно */ } }
   const row: Record<string, unknown> = { user_id: st.user_id, access_token: t.access_token, expires_at: new Date(Date.now() + t.expires_in * 1000).toISOString(), email, updated_at: new Date().toISOString() };
@@ -99,7 +99,18 @@ async function oauthCallback(url: URL): Promise<Response> {
 
 Deno.serve(handle(async (req) => {
   const url = new URL(req.url);
-  if (req.method === 'GET') return oauthCallback(url);
+  if (req.method === 'GET') {
+    // Ошибку входа показываем в самом приложении, а не страницей с кодом.
+    try { return await oauthCallback(url); }
+    catch (e) {
+      const st = url.searchParams.get('state');
+      const { data } = st ? await adminClient().from('oauth_states').select('return_to').eq('state', st).maybeSingle() : { data: null };
+      const back = data?.return_to || Deno.env.get('APP_URL') || '';
+      const msg = encodeURIComponent((e as Error).message || 'Не получилось подключить Google Календарь');
+      if (back) return new Response(null, { status: 302, headers: { Location: `${back}${back.includes('?') ? '&' : '?'}google=error&reason=${msg}` } });
+      return new Response(`Не получилось подключить Google Календарь: ${(e as Error).message}`, { status: 400, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    }
+  }
   const userId = await requireUser(req);
   const body = await req.json();
   const db = adminClient();
