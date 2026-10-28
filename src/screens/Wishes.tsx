@@ -117,7 +117,7 @@ function WishSheet({ wish, open, status, onClose }: { wish: Wish | null; open: b
     <Sheet open={open} onClose={onClose}>
       <h3>{wish ? 'Желание' : 'Новое желание'}</h3>
       <label className="lbl" style={{ flex: 'none' }}>Что хочу<input className="field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Поездка в Японию" /></label>
-      {preview && <img src={preview} alt="" style={{ width: '100%', borderRadius: 14, maxHeight: 240, objectFit: 'cover' }} />}
+      {preview && <img src={preview} alt="" style={{ width: '100%', borderRadius: 14, maxHeight: 280, objectFit: 'contain', background: 'var(--field)' }} />}
       <label className="btn" style={{ textAlign: 'center' }}>
         <Icon name="image" /> {busy ? 'Загружаю…' : image ? 'Заменить картинку' : 'Добавить картинку'}
         <input type="file" accept="image/*" hidden onChange={(e) => upload(e.target.files?.[0])} />

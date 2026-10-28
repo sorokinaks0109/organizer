@@ -22,7 +22,7 @@ body { margin: 0; }
 @media (min-width: 620px) { .wishes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .wish { border: 0; text-align: left; background: var(--surface); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; padding: 0; }
 .wish .ph { aspect-ratio: 4 / 3; background: var(--sp, var(--field)); display: grid; place-items: center; color: var(--sd, var(--muted)); font-size: 34px; max-width: 100%; }
-.wish img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+.wish img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; display: block; background: var(--field); max-width: 100%; }
 .wish .wb { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
 .wish b { font-size: 15.5px; line-height: 1.25; overflow-wrap: anywhere; }
 .wish.done { opacity: .7; }
