@@ -59,7 +59,7 @@ function normalize(e: GEvent, calendarId: string, family: boolean) {
 async function listRange(token: string, calendarId: string, from: string, to: string, q?: string) {
   const out: GEvent[] = [];
   let pageToken = '';
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 12; i++) {
     const p = new URLSearchParams({ timeMin: from, timeMax: to, singleEvents: 'true', orderBy: 'startTime', maxResults: '250' });
     if (q) p.set('q', q);
     if (pageToken) p.set('pageToken', pageToken);
