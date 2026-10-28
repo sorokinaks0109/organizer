@@ -23,6 +23,7 @@ export function Today() {
   const [day, setDay] = useState(tKey);
   const [payout, setPayout] = useState<Period | null>(null);
   const [undated, setUndated] = useState(false);
+  const [showDone, setShowDone] = useState(false);
   const x0 = useRef<number | null>(null);
 
   const d = parseIso(day);
@@ -53,7 +54,9 @@ export function Today() {
   };
 
   const rows: Row[] = [];
-  for (const t of tasksOn(day)) rows.push({ key: (t.done ? '3' : '1') + (t.due_time || '00:00'), node: taskRow(t) });
+  // Сделанное уходит из ленты; посмотреть можно, раскрыв «Сделано».
+  const doneOnDay = store.items.filter((t) => t.kind === 'task' && t.done && (t.due_date === day || (!t.due_date && t.done_at?.slice(0, 10) === day) || (day === tKey && t.done_at?.slice(0, 10) === tKey)));
+  for (const t of tasksOn(day)) if (!t.done) rows.push({ key: '1' + (t.due_time || '00:00'), node: taskRow(t) });
   if (day === tKey) for (const t of overdue) rows.push({ key: '0' + t.due_date, node: taskRow(t, true) });
   for (const e of eventsOn(day)) {
     const c = classify(e, store.event_links, store.areas, store.projects);
@@ -120,12 +123,14 @@ export function Today() {
       </div>
       <div className="daytitle">
         <b>{title}</b>
-        <span>{openCount ? `${openCount} ${plural(openCount, 'дело', 'дела', 'дел')}` : rows.length ? 'всё сделано' : ''}</span>
+        <span>{openCount ? `${openCount} ${plural(openCount, 'дело', 'дела', 'дел')}` : rows.length || doneOnDay.length ? 'всё сделано' : ''}</span>
       </div>
       <div className="timeline">
         {rows.map((r, i) => <div key={i} style={{ display: 'contents' }}>{r.node}</div>)}
-        {!rows.length && <div className="empty">{events == null && gConnected !== false ? 'Загружаю календарь…' : 'Свободный день. Можно взять что-то из «Без срока».'}</div>}
+        {!rows.length && <div className="empty">{doneOnDay.length ? 'Всё сделано. Можно отдыхать или взять что-то из «Без срока».' : events == null && gConnected !== false ? 'Загружаю календарь…' : 'Свободный день. Можно взять что-то из «Без срока».'}</div>}
       </div>
+      {doneOnDay.length > 0 && <button type="button" className="paidtoggle" style={{ background: 'var(--surface)' }} aria-expanded={showDone} onClick={() => setShowDone(!showDone)}><span>Сделано · {doneOnDay.length}</span><b>{showDone ? '▴' : '▾'}</b></button>}
+      {showDone && doneOnDay.length > 0 && <div className="timeline">{doneOnDay.map((t) => <div key={t.id} style={{ display: 'contents' }}>{taskRow(t)}</div>)}</div>}
       {leftover.length > 0 && <button className="btn" type="button" style={{ background: 'var(--surface)' }} onClick={moveAll}>Перенести несделанное на завтра · {leftover.length}</button>}
       {gError ? <span className="mini">Календарь: {gError}</span>
         : gConnected === false ? <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => go({ name: 'settings' })}>Подключить Google Календарь →</button> : null}
