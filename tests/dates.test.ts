@@ -59,3 +59,20 @@ describe('звук для SpeechKit', () => {
     expect(out[0]).toBe(Math.floor(0.5 * 0x7fff));
   });
 });
+
+import { segment, trimSilence } from '../src/lib/voice';
+describe('нарезка записи', () => {
+  const P = (rms: number, len = 1600) => ({ len, rms });
+  it('обрезает тишину по краям с запасом', () => {
+    const ps = [...Array(20).fill(P(0)), ...Array(5).fill(P(0.1)), ...Array(20).fill(P(0))];
+    const t = trimSilence(ps);
+    expect(t.length).toBe(4 + 5 + 6);
+  });
+  it('режет длинную запись по самому тихому месту', () => {
+    const ps = Array.from({ length: 300 }, (_, i) => P(i === 240 ? 0 : 0.1)); // 30 секунд по 0,1 с
+    const parts = segment(ps);
+    expect(parts.length).toBe(2);
+    expect(parts[0].length).toBe(241);
+    expect(parts.flat().length).toBe(300);
+  });
+});

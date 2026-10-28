@@ -1,6 +1,6 @@
 // Диктовка: говоришь — текст появляется в поле, можно поправить руками.
 // Два способа распознавания:
-//  • «yandex» — запись идёт в браузере, после каждой паузы кусок уходит в Yandex SpeechKit. Точнее для русского.
+//  • «yandex» — запись идёт в браузере, после «стоп» вся фраза уходит в Yandex SpeechKit. Точнее для русского.
 //  • «browser» — встроенное распознавание Chrome. Работает без ключей, но чаще ошибается.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
@@ -46,6 +46,37 @@ export function toPcm16(input: Float32Array, fromRate: number): Int16Array {
   return out;
 }
 
+type Piece = { pcm: Int16Array; len: number; rms: number };
+const MAX_SEC = 180;
+const VOICE = 0.01;
+
+/** Убирает тишину в начале и в конце записи, оставляя небольшой запас, чтобы не съесть первый и последний звук. */
+export function trimSilence<T extends { len: number; rms: number }>(pieces: T[]): T[] {
+  const first = pieces.findIndex((p) => p.rms > VOICE);
+  if (first < 0) return pieces.reduce((n, p) => n + p.len, 0) > RATE / 2 ? pieces : [];
+  let last = pieces.length - 1; while (last > first && pieces[last].rms <= VOICE) last--;
+  let a = first, pre = 0; while (a > 0 && pre < RATE * 0.4) { a--; pre += pieces[a].len; }
+  let b = last, post = 0; while (b < pieces.length - 1 && post < RATE * 0.6) { b++; post += pieces[b].len; }
+  return pieces.slice(a, b + 1);
+}
+
+/** Режет запись на части не длиннее max (лимит SpeechKit — 30 секунд) по самому тихому месту. */
+export function segment<T extends { len: number; rms: number }>(pieces: T[], max = 25 * RATE, look = 5 * RATE): T[][] {
+  const out: T[][] = []; let cur: T[] = []; let n = 0;
+  for (const p of pieces) {
+    if (n + p.len > max && cur.length) {
+      let best = cur.length - 1, acc = 0;
+      for (let i = cur.length - 1; i >= 0 && acc < look; i--) { acc += cur[i].len; if (cur[i].rms < cur[best].rms) best = i; }
+      out.push(cur.slice(0, best + 1)); cur = cur.slice(best + 1); n = cur.reduce((x, y) => x + y.len, 0);
+    }
+    cur.push(p); n += p.len;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+const join = (ps: Piece[]) => { const out = new Int16Array(ps.reduce((n, p) => n + p.len, 0)); let o = 0; for (const p of ps) { out.set(p.pcm, o); o += p.len; } return out; };
+
 async function recognize(pcm: Int16Array): Promise<string> {
   const { data } = await supabase!.auth.getSession();
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/speech?rate=${RATE}`;
@@ -68,51 +99,44 @@ export function useDictation(onText: (finalText: string) => void, engine: VoiceE
   const stopRef = useRef<() => Promise<void>>(async () => {});
   const useYandex = engine === 'yandex' && canRecord && !!supabase;
 
-  // ——— Yandex SpeechKit: запись кусками по паузам ———
+  // ——— Yandex SpeechKit: записываем всю фразу и отправляем целиком после «стоп» ———
+  // Целиком — потому что по кускам SpeechKit теряет начало фразы и путает слова на стыках.
   const startYandex = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-    const ctx = new w.AudioContext!();
-    const src = ctx.createMediaStreamSource(stream);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    // Браузер сам качественно переводит звук в 16 кГц, если попросить такую частоту; не вышло — переводим сами.
+    let ctx: AudioContext, src: MediaStreamAudioSourceNode;
+    try { ctx = new w.AudioContext!({ sampleRate: RATE }); src = ctx.createMediaStreamSource(stream); }
+    catch { ctx = new w.AudioContext!(); src = ctx.createMediaStreamSource(stream); }
     const proc = ctx.createScriptProcessor(4096, 1, 1);
-    let chunk: Int16Array[] = [], samples = 0, voiced = false, silent = 0;
-    let chain: Promise<void> = Promise.resolve();
-    let pending = 0;
-    const send = (parts: Int16Array[], len: number) => {
-      const pcm = new Int16Array(len); let o = 0;
-      for (const p of parts) { pcm.set(p, o); o += p.length; }
-      pending++; setBusy(true);
-      // Куски распознаются по очереди, чтобы текст шёл в том порядке, в каком говорили.
-      chain = chain.then(async () => {
-        try { const t = await recognize(pcm); if (t) cb.current(t); }
-        catch (e) { setError((e as Error).message); }
-        finally { pending--; if (!pending) setBusy(false); }
-      });
-    };
-    const flush = () => { if (voiced && samples) send(chunk, samples); chunk = []; samples = 0; voiced = false; silent = 0; };
+    const pieces: Piece[] = [];
+    let total = 0;
     proc.onaudioprocess = (ev) => {
+      if (total >= MAX_SEC * RATE) return;
       const input = ev.inputBuffer.getChannelData(0);
       let sum = 0; for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
-      const rms = Math.sqrt(sum / input.length);
       const pcm = toPcm16(input, ctx.sampleRate);
-      chunk.push(pcm); samples += pcm.length;
-      const dur = input.length / ctx.sampleRate;
-      if (rms > 0.012) { voiced = true; silent = 0; } else silent += dur;
-      const sec = samples / RATE;
-      // Пауза после фразы — отправляем; совсем длинный кусок режем на 25 секундах (лимит SpeechKit — 30).
-      if ((voiced && silent >= 0.9 && sec >= 1.2) || sec >= 25) flush();
-      // Тишина до начала речи не копится: оставляем последние полсекунды.
-      else if (!voiced && sec > 2) { while (samples > RATE / 2 && chunk.length > 1) samples -= chunk.shift()!.length; }
-      setInterim(voiced ? 'Слушаю…' : 'Говори');
+      pieces.push({ pcm, len: pcm.length, rms: Math.sqrt(sum / input.length) });
+      total += pcm.length;
+      const sec = Math.floor(total / RATE);
+      setInterim(total >= MAX_SEC * RATE ? 'Запись ограничена 3 минутами — нажми «стоп»' : `Запись ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`);
     };
     src.connect(proc); proc.connect(ctx.destination);
     stopRef.current = async () => {
       proc.onaudioprocess = null;
-      flush();
       try { src.disconnect(); proc.disconnect(); } catch { /* уже отключено */ }
       stream.getTracks().forEach((t) => t.stop());
       ctx.close().catch(() => {});
       setInterim('');
-      await chain;
+      const parts = segment(trimSilence(pieces));
+      if (!parts.length) return;
+      setBusy(true);
+      try {
+        // Длинная запись режется по самым тихим местам и распознаётся параллельно, порядок сохраняется.
+        const texts = await Promise.all(parts.map((ps) => recognize(join(ps))));
+        const t = texts.filter(Boolean).join(' ').trim();
+        if (t) cb.current(t); else setError('Не расслышала. Говори ближе к телефону или напиши руками.');
+      } catch (e) { setError((e as Error).message); }
+      finally { setBusy(false); }
     };
   }, []);
 
