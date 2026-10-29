@@ -19,9 +19,11 @@ function usePeriod() {
   return [p, (x: Period) => { remembered = x; setP(x); }] as const;
 }
 
+/** Все категории трат: стандартные, платёжные и свои — без повторов, по алфавиту. */
 function useSpendCats() {
   const { settings } = useStore();
-  return settings.spendCats?.length ? settings.spendCats : DEFAULT_SPEND_CATS;
+  return [...new Set([...DEFAULT_SPEND_CATS, ...(settings.planCats?.length ? settings.planCats : DEFAULT_PLAN_CATS), ...(settings.spendCats || [])])]
+    .sort((a, b) => (a === 'Прочее' ? 1 : b === 'Прочее' ? -1 : a.localeCompare(b, 'ru')));
 }
 function usePlanCats() {
   const { settings } = useStore();
@@ -305,7 +307,12 @@ function RowSheet({ p, row, onClose }: { p: Period; row: PlanRow | null; onClose
 function SpendSheet({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
   const store = useStore();
   const toast = useToast();
-  const cats = useSpendCats();
+  const allCats = useSpendCats();
+  // Плитками — 8 категорий, которыми пользуешься чаще всего; остальные в списке.
+  const used: Record<string, number> = {};
+  for (const e of store.expenses) if (e.kind === 'spend') used[e.category] = (used[e.category] || 0) + 1;
+  const top = [...allCats].sort((a, b) => (used[b] || 0) - (used[a] || 0) || allCats.indexOf(a) - allCats.indexOf(b)).slice(0, 8);
+  const cats = allCats;
   const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
   const [cat, setCat] = useState(expense?.category || cats[0]);
   const [what, setWhat] = useState(expense?.what || '');
@@ -322,7 +329,16 @@ function SpendSheet({ expense, onClose }: { expense: Expense | null; onClose: ()
   return (
     <Sheet open onClose={onClose}>
       <div className="amount">{amount ? money(Number(amount)) : <span style={{ color: 'var(--muted)' }}>0 ₽</span>}</div>
-      <div className="catgrid">{cats.map((c) => <button key={c} type="button" aria-pressed={c === cat} onClick={() => setCat(c)}><span>{abbr(c)}</span>{c}</button>)}</div>
+      <div className="catgrid">{top.map((c) => <button key={c} type="button" aria-pressed={c === cat} onClick={() => setCat(c)}><span>{abbr(c)}</span>{c}</button>)}</div>
+      <select className="field" aria-label="Все категории" value={top.includes(cat) ? '' : cat} onChange={async (e) => {
+        const v = e.target.value;
+        if (v === '+') { const n = prompt('Новая категория')?.trim(); if (!n) return; await store.saveSettings({ spendCats: [...allCats, n] }); setCat(n); return; }
+        if (v) setCat(v);
+      }}>
+        <option value="">{top.includes(cat) ? 'Другая категория…' : cat}</option>
+        {allCats.filter((c) => !top.includes(c)).map((c) => <option key={c} value={c}>{c}</option>)}
+        <option value="+">＋ Своя категория</option>
+      </select>
       <div className="row">
         <input className="field" style={{ flex: '2 1 140px' }} value={what} placeholder="Что (можно не писать)" aria-label="Что" onChange={(e) => setWhat(e.target.value)} />
         <input className="field" style={{ flex: '1 1 120px' }} type="date" value={date} aria-label="Дата" onChange={(e) => setDate(e.target.value)} />
