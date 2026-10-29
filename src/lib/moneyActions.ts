@@ -49,6 +49,16 @@ export async function deleteRow(store: Store, p: Period, row: PlanRow) {
   if (row.paid) await store.remove('expenses', { plan_ref: planRef(p, row.id) });
 }
 
+/** Перенести платёж с аванса на зарплату того же месяца или обратно. */
+export async function moveRow(store: Store, p: Period, row: PlanRow) {
+  const to = p.key === 'avans' ? 'zp' : 'avans';
+  await saveMonth(store, p.ym, (m) => {
+    m.plan[p.key] = (m.plan[p.key] || []).filter((r) => r.id !== row.id);
+    m.plan[to] = [...(m.plan[to] || []), row];
+  });
+  if (row.paid) await store.update('expenses', { plan_ref: planRef(p, row.id) }, { plan_ref: planRef({ ym: p.ym, key: to }, row.id) });
+}
+
 /** Повесить платёж на резерв (или снять). */
 export async function setReserve(store: Store, p: Period, rowId: string, on: boolean) {
   await saveMonth(store, p.ym, (m) => { m.plan[p.key] = (m.plan[p.key] || []).map((r) => (r.id === rowId ? { ...r, reserve: on } : r)); });

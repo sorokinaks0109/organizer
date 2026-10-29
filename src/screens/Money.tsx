@@ -5,7 +5,7 @@ import { useApp } from '../lib/context';
 import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, todayIso, WD, ymShift, ymTitle } from '../lib/dates';
 import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type PayKey, type Period, type Summary } from '../lib/money';
 import { vacationPayments } from '../lib/payroll';
-import { addIncome, confirmPayout, deleteIncome, deleteRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
+import { addIncome, confirmPayout, deleteIncome, deleteRow, moveRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
 import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 
@@ -294,6 +294,7 @@ function RowSheet({ p, row, onClose }: { p: Period; row: PlanRow | null; onClose
       <div className="row">
         <button className="btn primary" type="button" onClick={save}>Сохранить</button>
         <span style={{ flex: 1 }} />
+        {row && <button className="btn" type="button" onClick={async () => { await moveRow(store, p, row); onClose(); }}>{p.key === 'avans' ? 'Платить с зарплаты' : 'Платить с аванса'}</button>}
         {row && <button className="btn ghost danger" type="button" onClick={async () => { await deleteRow(store, p, row); onClose(); }}>Удалить</button>}
       </div>
     </Sheet>
