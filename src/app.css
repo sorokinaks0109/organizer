@@ -197,3 +197,12 @@ label.btn { cursor: pointer; }
 .pstatus .field { background: var(--surface); }
 .kbd-hint { margin: 0; font-size: 15px; color: var(--muted); line-height: 1.45; }
 .kbd-hint b { color: var(--ink); font-weight: 600; }
+
+/* ——— код для входа ——— */
+.lock { min-height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding-top: 40px; text-align: center; }
+.lock-dots { display: flex; gap: 16px; }
+.lock-dots i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink); }
+.lock-dots i.on { background: var(--ink); }
+.lock-keys { display: grid; grid-template-columns: repeat(3, 72px); gap: 14px; }
+.lock-keys button { width: 72px; height: 72px; border-radius: 50%; border: 0; background: var(--surface); font-size: 26px; font-weight: 500; color: var(--ink); }
+.lock-keys button:active { background: var(--field); }

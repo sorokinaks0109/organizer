@@ -59,10 +59,12 @@ describe('итог периода', () => {
     expect(r).toEqual({ put: 80000, allocated: 14000, free: 66000, balance: 80000 });
   });
   it('новый месяц без разовых платежей', () => {
-    let n = 0;
-    const m = monthFrom({ ...month, plan: { avans: [...month.plan.avans!, { id: 'o', name: 'Корпоратив', sum: 2750, cat: 'Прочее', paid: true, once: true }] } }, '2026-11', () => `n${n++}`);
+    const m = monthFrom({ ...month, plan: { avans: [...month.plan.avans!, { id: 'o', name: 'Корпоратив', sum: 2750, cat: 'Прочее', paid: true, once: true }] } }, '2026-11');
     expect(m.plan.avans!.map((r) => r.name)).toEqual(['ТСЖ', 'СГК', 'Страховка']);
     expect(m.plan.avans!.every((r) => !r.paid && !r.reserve)).toBe(true);
-    expect(m.income).toEqual({ avans: 64000, zp: 65000 });
+    // id те же, что в прошлом месяце: правка и удаление строки будущего месяца находят её
+    expect(m.plan.avans!.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+    // сумма выплат не копируется — её считает прогноз или вводит пользователь
+    expect(m.income).toEqual({});
   });
 });

@@ -48,11 +48,11 @@ export type Summary = {
 };
 
 /** Итог периода: доход, платежи, траты и сколько можно тратить в день. */
-export function summarize(month: MoneyMonth | null | undefined, p: Period, expenses: Expense[], incomes: Income[], today: string): Summary {
+export function summarize(month: MoneyMonth | null | undefined, p: Period, expenses: Expense[], incomes: Income[], today: string, expectedOverride?: number): Summary {
   const { start, end } = bounds(p);
   const inRange = (d: string) => d >= start && d <= end;
   const rows = month?.plan[p.key] ?? [];
-  const expected = Number(month?.income[p.key]) || 0;
+  const expected = expectedOverride ?? (Number(month?.income[p.key]) || 0);
   const received = !!month?.got[p.key];
   const extra = total(incomes.filter((i) => i.target === 'live' && !i.plan_ref && inRange(i.got_on)), (i) => i.amount);
   const own = rows.filter((r) => !r.reserve);
@@ -82,9 +82,11 @@ export function reserveState(months: MoneyMonth[], incomes: Income[]) {
 }
 
 /** План следующего месяца: те же суммы выплат и платежи, кроме разовых. */
-export function monthFrom(prev: MoneyMonth | null | undefined, ym: string, newId: () => string): MoneyMonth {
-  const copy = (rows?: PlanRow[]) => (rows || []).filter((r) => !r.once).map((r) => ({ id: newId(), name: r.name, sum: r.sum, cat: r.cat, paid: false }));
-  return { ym, income: { avans: prev?.income.avans, zp: prev?.income.zp }, got: {}, plan: { avans: copy(prev?.plan.avans), zp: copy(prev?.plan.zp) } };
+export function monthFrom(prev: MoneyMonth | null | undefined, ym: string): MoneyMonth {
+  // id строк сохраняются: иначе будущий месяц, который ещё не записан в базу, при каждом показе получал бы новые id,
+  // и правка или удаление строки не находили бы её.
+  const copy = (rows?: PlanRow[]) => (rows || []).filter((r) => !r.once).map((r) => ({ id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false }));
+  return { ym, income: {}, got: {}, plan: { avans: copy(prev?.plan.avans), zp: copy(prev?.plan.zp) } };
 }
 
 export const todayPeriod = (today = iso(new Date())) => periodOf(today);

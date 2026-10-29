@@ -1,8 +1,9 @@
 // Действия с деньгами. Каждое меняет все связанные записи сразу:
 // оплатила платёж → строка плана отмечена и появился расход; пришла выплата → доход; отложила → копилка.
 import type { useStore } from './store';
-import { todayIso, uid } from './dates';
-import { incomeRef, monthFrom, PAY, planRef, type Period } from './money';
+import { todayIso } from './dates';
+import { bounds, incomeRef, monthFrom, PAY, planRef, summarize, type Period } from './money';
+import { avansForecast, DEFAULT_PAYROLL, payDay, payrollReady, zpForecast, type Forecast } from './payroll';
 import type { Income, MoneyMonth, PlanRow, Wish } from './types';
 
 type Store = ReturnType<typeof useStore>;
@@ -14,7 +15,7 @@ export function monthOrNew(store: Store, ym: string): MoneyMonth {
   const m = store.money_months.find((x) => x.ym === ym);
   if (m) return m;
   const prev = [...store.money_months].filter((x) => x.ym < ym).sort((a, b) => b.ym.localeCompare(a.ym))[0];
-  return monthFrom(prev, ym, uid);
+  return monthFrom(prev, ym);
 }
 
 export async function saveMonth(store: Store, ym: string, mut: (m: MoneyMonth) => void) {
@@ -68,9 +69,36 @@ export async function unconfirmPayout(store: Store, p: Period) {
 }
 
 /** Сумма выплаты на будущее (до того, как пришла). */
+export type Payout = { amount: number; source: 'actual' | 'fixed' | 'forecast' | 'plan'; forecast: Forecast | null; date: string };
+
+/** Сколько придёт в выплату: факт, если пришла; введённая руками сумма; иначе — расчёт по зарплатным настройкам. */
+export function payoutFor(store: Store, p: Period): Payout {
+  const m = monthOrNew(store, p.ym);
+  const pr = store.settings.payroll;
+  const date = payDay(bounds(p).start, pr ?? DEFAULT_PAYROLL);
+  const forecast = payrollReady(pr)
+    ? (p.key === 'avans' ? avansForecast(p.ym, pr) : zpForecast(p.ym, pr, payoutFor(store, { ym: p.ym, key: 'avans' }).amount))
+    : null;
+  const stored = Number(m.income[p.key]) || 0;
+  if (m.got[p.key]) return { amount: stored, source: 'actual', forecast, date };
+  if (m.income.fixed?.[p.key]) return { amount: stored, source: 'fixed', forecast, date };
+  if (forecast) return { amount: Math.round(forecast.amount), source: 'forecast', forecast, date };
+  return { amount: stored, source: 'plan', forecast, date };
+}
+
+/** Итог периода с учётом прогноза выплаты. */
+export function summaryFor(store: Store, p: Period, today = todayIso()) {
+  return summarize(monthOrNew(store, p.ym), p, store.expenses, store.incomes, today, payoutFor(store, p).amount);
+}
+
+/** Сумму выплаты ввели руками — она важнее расчёта, пока её не сбросить. */
 export async function setExpected(store: Store, p: Period, amount: number) {
-  await saveMonth(store, p.ym, (m) => { m.income = { ...m.income, [p.key]: amount }; });
+  await saveMonth(store, p.ym, (m) => { m.income = { ...m.income, [p.key]: amount, fixed: { ...m.income.fixed, [p.key]: true } }; });
   if (store.incomes.some((i) => i.plan_ref === incomeRef(p))) await store.update('incomes', { plan_ref: incomeRef(p) }, { amount });
+}
+
+export async function resetExpected(store: Store, p: Period) {
+  await saveMonth(store, p.ym, (m) => { const f = { ...m.income.fixed }; delete f[p.key]; const inc = { ...m.income, fixed: f }; delete inc[p.key]; m.income = inc; });
 }
 
 /** Другой доход: премия, заказ, отпускные. target решает, куда он идёт. */

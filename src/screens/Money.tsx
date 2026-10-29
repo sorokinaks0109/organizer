@@ -3,8 +3,9 @@ import { useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, todayIso, WD, ymShift, ymTitle } from '../lib/dates';
-import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, summarize, type PayKey, type Period, type Summary } from '../lib/money';
-import { addIncome, confirmPayout, deleteIncome, deleteRow, monthOrNew, payRow, saveRow, setExpected, setReserve, unconfirmPayout, unpayRow } from '../lib/moneyActions';
+import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type PayKey, type Period, type Summary } from '../lib/money';
+import { vacationPayments } from '../lib/payroll';
+import { addIncome, confirmPayout, deleteIncome, deleteRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
 import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 
@@ -32,11 +33,11 @@ export function Money() {
   const { go } = useApp();
   const [p, setP] = usePeriod();
   const today = todayIso();
-  const month = monthOrNew(store, p.ym);
-  const s = summarize(month, p, store.expenses, store.incomes, today);
+  const s = summaryFor(store, p, today);
+  const po = payoutFor(store, p);
   const reserve = reserveState(store.money_months, store.incomes);
   const [payout, setPayout] = useState(false);
-  const [income, setIncome] = useState<Income | 'new' | null>(null);
+  const [income, setIncome] = useState<Income | 'new' | Partial<Income> | null>(null);
   const [row, setRow] = useState<PlanRow | 'new' | null>(null);
   const [spend, setSpend] = useState<Expense | 'new' | null>(null);
   const [showPaid, setShowPaid] = useState(false);
@@ -46,6 +47,9 @@ export function Money() {
 
   const inRange = (d: string) => d >= s.start && d <= s.end;
   const incomes = store.incomes.filter((i) => inRange(i.got_on) && !i.plan_ref);
+  // Ожидаемые отпускные этого периода, пока не отмечено, что они пришли.
+  const vacs = store.settings.payroll ? vacationPayments(store.settings.payroll).filter((v) => inRange(v.date)
+    && !store.incomes.some((i) => i.source === 'Отпускные' && Math.abs(parseIso(i.got_on).getTime() - parseIso(v.date).getTime()) <= 10 * 864e5)) : [];
   const expenses = store.expenses.filter((e) => inRange(e.spent_on) && (filter === 'all' || e.kind === filter || (filter === 'spend' && e.kind === 'saving'))).sort((a, b) => (b.spent_on + b.created_at).localeCompare(a.spent_on + a.created_at));
   const byDay: [string, Expense[]][] = [];
   for (const e of expenses) { const last = byDay[byDay.length - 1]; if (last && last[0] === e.spent_on) last[1].push(e); else byDay.push([e.spent_on, [e]]); }
@@ -97,11 +101,19 @@ export function Money() {
 
       <div className="block">
         <div className="bh"><h4>Доходы</h4><button type="button" onClick={() => setIncome('new')}>+ доход</button></div>
+        {!store.settings.payroll?.oklad && <button type="button" className="alert ok" style={{ border: 0, textAlign: 'left', marginBottom: 6 }} onClick={() => go({ name: 'settings' })}>Заполни оклад и отпуска в Настройках → «Зарплата и отпуска» — аванс, зарплата и отпускные будут считаться сами ›</button>}
         <div className={'payrow' + (s.received ? ' on' : '')} style={{ ['--d-blue' as string]: 'var(--ok)' }}>
           <button type="button" className="cb" aria-label={`${PAY[p.key].name} пришёл`} onClick={() => setPayout(true)}>{s.received ? CHECK : null}</button>
-          <button type="button" className="nm" onClick={() => setPayout(true)}>{PAY[p.key].name}<small>{s.received ? 'пришёл' : `ожидается ${dayLabel(s.start)}`} · нажми, чтобы поправить сумму</small></button>
+          <button type="button" className="nm" onClick={() => setPayout(true)}>{PAY[p.key].name}<small>{s.received ? 'пришёл' : `ожидается ${dayLabel(po.date)}`}{po.source === 'forecast' ? ' · по расчёту' : po.source === 'fixed' ? ' · сумма введена' : ''} · нажми, чтобы посмотреть или поправить</small></button>
           <span className="sm" style={{ color: s.received ? 'var(--ok)' : undefined }}>{money(s.expected)}</span>
         </div>
+        {vacs.map((v) => (
+          <button key={v.date} type="button" className="sprow inc" style={{ opacity: 0.85 }} onClick={() => setIncome({ what: 'Отпускные', source: 'Отпускные', amount: Math.round(v.amount), got_on: v.date, target: 'reserve' })}>
+            <span className="ic">○</span>
+            <span>Отпускные<small>ожидаются {dayLabel(v.date)} · {v.days} {plural(v.days, 'день', 'дня', 'дней')} отпуска · нажми, когда придут</small></span>
+            <span className="sm" style={{ color: 'var(--muted)' }}>≈{money(v.amount)}</span>
+          </button>
+        ))}
         {incomes.map((i) => (
           <button key={i.id} type="button" className="sprow inc" onClick={() => setIncome(i)}>
             <span className="ic">+</span>
@@ -150,7 +162,7 @@ export function Money() {
       )}
 
       {payout && <PayoutSheet p={p} onClose={() => setPayout(false)} />}
-      {income && <IncomeSheet key={income === 'new' ? 'new' : income.id} income={income === 'new' ? null : income} onClose={() => setIncome(null)} />}
+      {income && <IncomeSheet key={income === 'new' ? 'new' : income.id ?? 'preset'} income={income === 'new' || !income.id ? null : income as Income} preset={income !== 'new' && !income.id ? income : undefined} onClose={() => setIncome(null)} />}
       {row && <RowSheet key={row === 'new' ? 'new' : row.id} p={p} row={row === 'new' ? null : row} onClose={() => setRow(null)} />}
       {spend && <SpendSheet key={spend === 'new' ? 'new' : spend.id} expense={spend === 'new' ? null : spend} onClose={() => setSpend(null)} />}
     </>
@@ -178,33 +190,44 @@ function PayRow({ r, p, onEdit }: { r: PlanRow; p: Period; onEdit: () => void })
 export function PayoutSheet({ p, onClose }: { p: Period; onClose: () => void }) {
   const store = useStore();
   const toast = useToast();
-  const s = summarize(monthOrNew(store, p.ym), p, store.expenses, store.incomes, todayIso());
-  const [sum, setSum] = useState(String(s.expected || ''));
+  const s = summaryFor(store, p);
+  const po = payoutFor(store, p);
+  const [sum, setSum] = useState(String(Math.round(s.expected) || ''));
   const [busy, setBusy] = useState(false);
   const run = async (f: () => Promise<void>, msg: string) => { setBusy(true); await f(); setBusy(false); toast(msg); onClose(); };
   return (
     <Sheet open onClose={onClose}>
-      <h3>{PAY[p.key].name} {dayLabel(s.start)}</h3>
-      <span className="mini">Сумма каждый раз своя — впиши, сколько пришло на самом деле. Она попадёт в доходы, и от неё посчитается, сколько можно тратить.</span>
+      <h3>{PAY[p.key].name} {dayLabel(po.date)}</h3>
+      {po.forecast ? (
+        <div className="card" style={{ background: 'var(--field)', gap: 4, padding: 12 }}>
+          <span className="lbl-t">Расчёт по окладу и графику{p.key === 'zp' ? ' — за месяц, минус аванс' : ' — за 1–15 число'}</span>
+          {po.forecast.lines.map(([k, v], i) => <div key={i} className="kv mini"><span>{k}</span><span>{v < 0 ? '−' : ''}{money(Math.abs(v))}</span></div>)}
+          <div className="kv"><b>Ожидается</b><b>{money(po.forecast.amount)}</b></div>
+          {po.source === 'fixed' && <span className="mini">Сейчас стоит введённая тобой сумма {money(s.expected)}.</span>}
+        </div>
+      ) : <span className="mini">Чтобы сумма считалась сама, заполни оклад в Настройках → «Зарплата и отпуска».</span>}
+      <span className="mini">Пришло не столько — впиши, сколько на самом деле. Это попадёт в доходы{p.key === 'avans' ? ', а зарплата пересчитается от фактического аванса' : ''}.</span>
       <input className="field amount" type="number" inputMode="numeric" value={sum} aria-label="Сумма" onChange={(e) => setSum(e.target.value)} />
       <div className="row">
         <button className="btn primary" type="button" disabled={busy || !(Number(sum) > 0)} onClick={() => run(() => confirmPayout(store, p, Number(sum)), `${PAY[p.key].name} ${money(Number(sum))} — в доходах`)}>{s.received ? 'Сохранить сумму' : 'Пришло'}</button>
         {!s.received && <button className="btn" type="button" disabled={busy || !(Number(sum) > 0)} onClick={() => run(() => setExpected(store, p, Number(sum)), 'Ожидаемая сумма сохранена')}>Ещё не пришло, просто сумма</button>}
+        {!s.received && po.source === 'fixed' && po.forecast && <button className="btn ghost" type="button" disabled={busy} onClick={() => run(() => resetExpected(store, p), 'Снова по расчёту')}>Вернуть расчёт</button>}
         {s.received && <button className="btn ghost danger" type="button" disabled={busy} onClick={() => run(() => unconfirmPayout(store, p), 'Отметка снята')}>Не пришло</button>}
       </div>
     </Sheet>
   );
 }
 
-function IncomeSheet({ income, onClose }: { income: Income | null; onClose: () => void }) {
+export function IncomeSheet({ income, preset, onClose }: { income: Income | null; preset?: Partial<Income>; onClose: () => void }) {
   const store = useStore();
   const { go } = useApp();
   const toast = useToast();
-  const [what, setWhat] = useState(income?.what || '');
-  const [sum, setSum] = useState(income ? String(income.amount) : '');
-  const [source, setSource] = useState(income?.source || 'Премия');
-  const [date, setDate] = useState(income?.got_on || todayIso());
-  const [target, setTarget] = useState<Income['target']>(income?.target || 'live');
+  const base = income ?? preset;
+  const [what, setWhat] = useState(base?.what || '');
+  const [sum, setSum] = useState(base?.amount ? String(base.amount) : '');
+  const [source, setSource] = useState(base?.source || 'Премия');
+  const [date, setDate] = useState(base?.got_on && base.got_on <= todayIso() ? base.got_on : todayIso());
+  const [target, setTarget] = useState<Income['target']>(base?.target || 'live');
   const [wish, setWish] = useState(income?.wish_id || '');
   const wishes = store.wishes.filter((x) => x.status !== 'done');
   const save = async () => {
@@ -322,7 +345,7 @@ export function Reserve() {
   const r = reserveState(store.money_months, store.incomes);
   const periods: Period[] = [];
   for (let q = periodOf(today), i = 0; i < 6; q = nextPeriod(q), i++) periods.push(q);
-  const sums: Summary[] = periods.map((q) => summarize(monthOrNew(store, q.ym), q, store.expenses, store.incomes, today));
+  const sums: Summary[] = periods.map((q) => summaryFor(store, q, today));
   const put = store.incomes.filter((i) => i.target === 'reserve').sort((a, b) => b.got_on.localeCompare(a.got_on));
   const toggle = async (q: Period, row: PlanRow) => {
     if (!row.reserve && rowCost(row) > r.free) toast(`В резерве свободно только ${money(r.free)} — платёж уйдёт в минус резерва`);

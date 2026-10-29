@@ -7,6 +7,7 @@ import { useGoogleEvents, type CalEvent } from './lib/gcal';
 import { App as AppCtxProvider, type View } from './lib/context';
 import type { Area, Item } from './lib/types';
 import { Icon, useToast } from './components/ui';
+import { PinGate } from './components/Lock';
 import { Login, NotConfigured } from './screens/Login';
 import { Today } from './screens/Today';
 import { AreaView, Tiles } from './screens/Areas';
@@ -28,7 +29,7 @@ export function Root() {
   if (!supabase) return <NotConfigured />;
   if (session === undefined) return null;
   if (!session) return <Login />;
-  return <StoreProvider userId={session.user.id} onError={toast}><Shell /></StoreProvider>;
+  return <PinGate><StoreProvider userId={session.user.id} onError={toast}><Shell /></StoreProvider></PinGate>;
 }
 
 const DEFAULT_AREAS: Pick<Area, 'name' | 'color' | 'keywords'>[] = [

@@ -7,6 +7,8 @@ import { classify, isCancelled } from '../lib/gcal';
 import { absDate, addDays, iso, todayIso } from '../lib/dates';
 import { COLORS, type Color, type Person } from '../lib/types';
 import { Hero, Icon, Sheet, useToast } from '../components/ui';
+import { PayrollCard } from './PayrollCard';
+import { resetPin } from '../components/Lock';
 
 export function Settings() {
   const store = useStore();
@@ -95,6 +97,8 @@ export function Settings() {
         </label>
       </div>
 
+      <PayrollCard />
+
       <div className="card">
         <div className="card-t">Деньги</div>
         <label className="lbl" style={{ flex: 'none' }}>Лимит на Вайлдберриз в месяц, ₽
@@ -118,7 +122,8 @@ export function Settings() {
         <span>{email}</span>
         <div className="row">
           <button className="btn" type="button" onClick={async () => { const p = prompt('Новый пароль (не короче 8 символов)'); if (!p) return; const { error } = await supabase!.auth.updateUser({ password: p }); toast(error ? error.message : 'Пароль изменён'); }}>Сменить пароль</button>
-          <button className="btn ghost danger" type="button" onClick={async () => { await supabase!.auth.signOut(); try { localStorage.removeItem('org.cache.v2'); localStorage.removeItem('org.gcal.v1'); } catch { /* не страшно */ } location.reload(); }}>Выйти</button>
+          <button className="btn" type="button" onClick={() => { resetPin(); location.reload(); }}>Сменить код входа</button>
+          <button className="btn ghost danger" type="button" onClick={async () => { await supabase!.auth.signOut(); resetPin(); try { localStorage.removeItem('org.cache.v2'); localStorage.removeItem('org.gcal.v1'); } catch { /* не страшно */ } location.reload(); }}>Выйти</button>
         </div>
       </div>
 

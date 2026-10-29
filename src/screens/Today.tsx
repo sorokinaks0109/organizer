@@ -4,14 +4,15 @@ import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM } from '../lib/gcal';
 import { addDays, cap1, greeting, iso, MON, money, parseIso, plural, todayIso, WD, WD_FULL } from '../lib/dates';
-import { bounds, PAY, periodOf, summarize, type Period } from '../lib/money';
-import { monthOrNew } from '../lib/moneyActions';
-import type { Item } from '../lib/types';
+import { nextPeriod, PAY, periodOf, type Period } from '../lib/money';
+import { vacationPayments } from '../lib/payroll';
+import { payoutFor, summaryFor } from '../lib/moneyActions';
+import type { Income, Item } from '../lib/types';
 import { CHECK, Icon, Sheet, sc, useToast } from '../components/ui';
 import { TaskCard } from '../components/Rows';
 import { Tiles } from './Areas';
 import { HealthStrip } from './Health';
-import { PayoutSheet } from './Money';
+import { IncomeSheet, PayoutSheet } from './Money';
 
 type Row = { key: string; node: ReactNode };
 
@@ -24,6 +25,7 @@ export function Today() {
   const [payout, setPayout] = useState<Period | null>(null);
   const [undated, setUndated] = useState(false);
   const [showDone, setShowDone] = useState(false);
+  const [vacIncome, setVacIncome] = useState<Partial<Income> | null>(null);
   const x0 = useRef<number | null>(null);
 
   const d = parseIso(day);
@@ -70,9 +72,10 @@ export function Today() {
     ) });
   }
   // День выплаты: подтвердить сумму, потом — перейти к платежам.
-  const per = periodOf(day);
-  if (bounds(per).start === day) {
-    const s = summarize(monthOrNew(store, per.ym), per, store.expenses, store.incomes, tKey);
+  // Выплата показывается в день, когда реально приходит (28-е или 13-е, а если выходной — рабочий день раньше).
+  const per = [periodOf(day), nextPeriod(periodOf(day))].find((q) => payoutFor(store, q).date === day);
+  if (per) {
+    const s = summaryFor(store, per, tKey);
     rows.push({ key: '0', node: (
       <div className="tl">
         <span className="tm">выплата</span><span className="mk money">₽</span>
@@ -81,6 +84,20 @@ export function Today() {
           <small><span className="mut">{s.rows.length} {plural(s.rows.length, 'платёж', 'платежа', 'платежей')} · осталось оплатить {money(s.left)}</span></small>
           {!s.received ? <button className="pill" type="button" onClick={() => setPayout(per)}>Пришёл? Подтвердить сумму</button>
             : s.left > 0 ? <button className="pill" type="button" onClick={() => go({ name: 'money' })}>Оплатить</button> : null}
+        </span>
+      </div>
+    ) });
+  }
+  // Отпускные — в четверг перед отпуском, пока не отмечено, что пришли.
+  for (const v of store.settings.payroll ? vacationPayments(store.settings.payroll) : []) {
+    if (v.date !== day || store.incomes.some((i) => i.source === 'Отпускные' && Math.abs(parseIso(i.got_on).getTime() - parseIso(v.date).getTime()) <= 10 * 864e5)) continue;
+    rows.push({ key: '0', node: (
+      <div className="tl">
+        <span className="tm">выплата</span><span className="mk money">₽</span>
+        <span className="tx">
+          <b>Отпускные ≈{money(v.amount)}</b>
+          <small><span className="mut">{v.days} {plural(v.days, 'день', 'дня', 'дней')} отпуска с {parseIso(v.vacation.start).getDate()} {MON[parseIso(v.vacation.start).getMonth()]}</span></small>
+          <button className="pill" type="button" onClick={() => setVacIncome({ what: 'Отпускные', source: 'Отпускные', amount: Math.round(v.amount), got_on: v.date, target: 'reserve' })}>Пришли? Отметить и распределить</button>
         </span>
       </div>
     ) });
@@ -137,6 +154,7 @@ export function Today() {
       {noDate.length > 0 && <button className="linkrow" type="button" onClick={() => setUndated(true)}><b>Без срока</b><span>{noDate.length} {plural(noDate.length, 'дело', 'дела', 'дел')} ›</span></button>}
       <Tiles />
       {payout && <PayoutSheet p={payout} onClose={() => setPayout(null)} />}
+      {vacIncome && <IncomeSheet income={null} preset={vacIncome} onClose={() => setVacIncome(null)} />}
       <Sheet open={undated} onClose={() => setUndated(false)}>
         <h3>Без срока</h3>
         <div className="tlist">{noDate.map((t) => <TaskCard key={t.id} t={t} showArea />)}</div>

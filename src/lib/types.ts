@@ -17,7 +17,8 @@ export type EventLink = { event_id: string; area_id: string | null; project_id: 
 export type Person = { id: string; name: string; email: string | null; color: Color; sort: number };
 /** Строка плана платежей. reserve — оплачивается из резерва (отпускных и т.п.), а не из этой выплаты. once — разовый, в следующий период не переносится. */
 export type PlanRow = { id: string; name: string; sum: number; cat: string; paid: boolean; paid_sum?: number; paid_on?: string; reserve?: boolean; once?: boolean };
-export type MoneyMonth = { ym: string; income: { avans?: number; zp?: number }; got: { avans?: boolean; zp?: boolean }; plan: { avans?: PlanRow[]; zp?: PlanRow[]; other?: PlanRow[] } };
+/** income.fixed — сумму выплаты ввели руками; иначе она считается по зарплатным настройкам. */
+export type MoneyMonth = { ym: string; income: { avans?: number; zp?: number; fixed?: { avans?: boolean; zp?: boolean } }; got: { avans?: boolean; zp?: boolean }; plan: { avans?: PlanRow[]; zp?: PlanRow[]; other?: PlanRow[] } };
 /** kind: spend — повседневная трата, payment — оплаченный платёж из плана, saving — отложено в копилку. */
 export type Expense = { id: string; what: string; amount: number; category: string; wb: boolean; spent_on: string; created_at: string; kind: 'spend' | 'payment' | 'saving'; plan_ref: string | null; from_reserve: boolean };
 /** target: live — на жизнь в текущем периоде, reserve — отложено на будущие платежи, wish — в копилку желания. */
@@ -35,6 +36,8 @@ export type Settings = {
   voice?: 'keyboard' | 'yandex' | 'browser';
   /** Сферы по умолчанию уже созданы при первом входе. */
   seeded?: boolean;
+  /** Оклад, надбавки, график, отпуска — для прогноза аванса, зарплаты и отпускных. */
+  payroll?: import('./payroll').Payroll;
   /** Ежедневный чек-лист здоровья. */
   health?: HealthItem[];
   subscriptions?: { prefix: string; total: number }[];
