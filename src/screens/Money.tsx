@@ -1,9 +1,9 @@
-// Деньги по выплатам: сколько можно тратить в день, доходы, платежи (галочка = расход), траты, резерв, итоги по месяцам.
+// Деньги: вкладки «Сейчас» (сколько в день, к оплате, траты), «План» (выплаты вперёд), «Итоги»; резерв и итоги по месяцам.
 import { useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, todayIso, WD, ymShift, ymTitle } from '../lib/dates';
-import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type PayKey, type Period, type Summary } from '../lib/money';
+import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type Period, type Summary } from '../lib/money';
 import { vacationPayments } from '../lib/payroll';
 import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, moveRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
@@ -12,12 +12,6 @@ import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 const short = (d: string) => { const x = parseIso(d); return `${x.getDate()} ${MON_SHORT[x.getMonth()]}`; };
 const dayLabel = (d: string) => { const x = parseIso(d); return `${x.getDate()} ${MON[x.getMonth()]}, ${WD[x.getDay()]}`; };
 const abbr = (s: string) => s.replace(/[^\p{L}]/gu, '').slice(0, 2) || '·';
-
-let remembered: Period | null = null;
-function usePeriod() {
-  const [p, setP] = useState<Period>(() => remembered ?? periodOf(todayIso()));
-  return [p, (x: Period) => { remembered = x; setP(x); }] as const;
-}
 
 /** Все категории трат: стандартные, платёжные и свои — без повторов, по алфавиту. */
 function useSpendCats() {
@@ -30,11 +24,40 @@ function usePlanCats() {
   return settings.planCats?.length ? settings.planCats : DEFAULT_PLAN_CATS;
 }
 
+type Tab = 'now' | 'plan' | 'stats';
+let rememberedTab: Tab = 'now';
+
+/** Деньги — три вкладки: «Сейчас» (сколько в день, что оплатить, траты), «План» (лента выплат вперёд), «Итоги». */
 export function Money() {
+  const [tab, setTabState] = useState<Tab>(rememberedTab);
+  const setTab = (t: Tab) => { rememberedTab = t; setTabState(t); };
+  return (
+    <>
+      <div className="topbar"><div className="hello"><h1 className="h">Деньги</h1></div></div>
+      <div className="seg seg3" role="tablist" aria-label="Раздел">
+        {([['now', 'Сейчас'], ['plan', 'План'], ['stats', 'Итоги']] as const).map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>)}
+      </div>
+      {tab === 'now' && <NowTab />}
+      {tab === 'plan' && <PlanTab />}
+      {tab === 'stats' && <Stats embedded />}
+    </>
+  );
+}
+
+/** Ожидаемые отпускные в промежутке, пока не отмечено, что они пришли. */
+function useExpectedVacations(start: string, end: string) {
+  const store = useStore();
+  const pr = store.settings.payroll;
+  if (!pr) return [];
+  return vacationPayments(pr).filter((v) => v.date >= start && v.date <= end
+    && !store.incomes.some((i) => i.source === 'Отпускные' && Math.abs(parseIso(i.got_on).getTime() - parseIso(v.date).getTime()) <= 10 * 864e5));
+}
+
+function NowTab() {
   const store = useStore();
   const { go } = useApp();
-  const [p, setP] = usePeriod();
   const today = todayIso();
+  const p = periodOf(today);
   const s = summaryFor(store, p, today);
   const po = payoutFor(store, p);
   const reserve = reserveState(store.money_months, store.incomes);
@@ -43,45 +66,26 @@ export function Money() {
   const [row, setRow] = useState<PlanRow | 'new' | null>(null);
   const [spend, setSpend] = useState<Expense | 'new' | null>(null);
   const [showPaid, setShowPaid] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'payment' | 'spend'>('all');
-  const isNow = samePeriod(p, periodOf(today));
+  const [showIncome, setShowIncome] = useState(false);
+  const [allSpends, setAllSpends] = useState(false);
   const nextStart = iso(addDays(parseIso(s.end), 1));
 
   const inRange = (d: string) => d >= s.start && d <= s.end;
   const incomes = store.incomes.filter((i) => inRange(i.got_on) && !i.plan_ref);
-  // Ожидаемые отпускные этого периода, пока не отмечено, что они пришли.
-  const vacs = store.settings.payroll ? vacationPayments(store.settings.payroll).filter((v) => inRange(v.date)
-    && !store.incomes.some((i) => i.source === 'Отпускные' && Math.abs(parseIso(i.got_on).getTime() - parseIso(v.date).getTime()) <= 10 * 864e5)) : [];
-  const expenses = store.expenses.filter((e) => inRange(e.spent_on) && (filter === 'all' || e.kind === filter || (filter === 'spend' && e.kind === 'saving'))).sort((a, b) => (b.spent_on + b.created_at).localeCompare(a.spent_on + a.created_at));
+  const vacs = useExpectedVacations(s.start, s.end);
+  const spends = store.expenses.filter((e) => inRange(e.spent_on) && e.kind !== 'payment').sort((a, b) => (b.spent_on + b.created_at).localeCompare(a.spent_on + a.created_at));
+  const shown = allSpends ? spends : spends.slice(0, 8);
   const byDay: [string, Expense[]][] = [];
-  for (const e of expenses) { const last = byDay[byDay.length - 1]; if (last && last[0] === e.spent_on) last[1].push(e); else byDay.push([e.spent_on, [e]]); }
-  const cats: Record<string, number> = {};
-  for (const e of store.expenses) if (inRange(e.spent_on) && e.kind !== 'saving') cats[e.category] = (cats[e.category] || 0) + Number(e.amount);
-  const catList = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+  for (const e of shown) { const last = byDay[byDay.length - 1]; if (last && last[0] === e.spent_on) last[1].push(e); else byDay.push([e.spent_on, [e]]); }
   const open = s.rows.filter((r) => !r.paid), done = s.rows.filter((r) => r.paid);
   const w = (v: number) => `${Math.max(0, (v / Math.max(s.income, s.planned + s.spent + s.saved, 1)) * 100).toFixed(2)}%`;
+  const waiting = !s.received || vacs.length > 0;
 
   return (
     <>
-      <div className="topbar">
-        <div className="hello">
-          <span className="date">{isNow ? `осталось ${s.daysLeft} ${plural(s.daysLeft, 'день', 'дня', 'дней')} до следующей выплаты` : today < s.start ? 'будущий период — по плану' : 'прошедший период'}</span>
-          <h1 className="h">Деньги</h1>
-        </div>
-        <button className="ibtn" type="button" aria-label="Итоги по месяцам" style={{ background: 'var(--surface)' }} onClick={() => go({ name: 'stats' })}><Icon name="stats" /></button>
-      </div>
-      <div className="pseg" role="group" aria-label="Выплата">
-        <button className="arr" type="button" aria-label="Раньше" onClick={() => setP(prevPeriod(p))}><Icon name="back" /></button>
-        {(['avans', 'zp'] as PayKey[]).map((k) => {
-          const q = { ym: p.ym, key: k }, b = bounds(q);
-          return <button key={k} type="button" aria-pressed={p.key === k} onClick={() => setP(q)}>{PAY[k].name} {short(b.start)}<small>до {short(b.end)}</small></button>;
-        })}
-        <button className="arr" type="button" aria-label="Позже" onClick={() => setP(nextPeriod(p))}><Icon name="next" /></button>
-      </div>
-
       <div className="wallet">
-        <span className="lbl-t">{isNow ? 'Можно тратить в день' : 'Свободно за период'}</span>
-        <div className={'big-num' + (s.free < 0 ? ' neg' : '')}>{isNow ? money(s.perDay) : money(s.free)} {isNow && <small>до {short(nextStart)}</small>}</div>
+        <span className="lbl-t">Можно тратить в день · {PAY[p.key].name.toLowerCase()} {short(s.start)} — {short(s.end)}</span>
+        <div className={'big-num' + (s.free < 0 ? ' neg' : '')}>{money(s.perDay)} <small>ещё {s.daysLeft} {plural(s.daysLeft, 'день', 'дня', 'дней')}, до {short(nextStart)}</small></div>
         <div className="split" aria-hidden="true">
           <i className="paid" style={{ width: w(s.paid) }} /><i className="pay" style={{ width: w(s.left) }} /><i className="sp" style={{ width: w(s.spent) }} /><i className="sv" style={{ width: w(s.saved) }} /><i className="fr" style={{ width: w(s.free) }} />
         </div>
@@ -90,44 +94,14 @@ export function Money() {
           <div><span><i style={{ background: 'var(--d-orange)' }} />Траты</span><b>{money(s.spent + s.saved)}</b></div>
           <div><span><i style={{ background: 'var(--ok)' }} />Свободно</span><b style={s.free < 0 ? { color: 'var(--danger)' } : undefined}>{money(s.free)}</b></div>
         </div>
-        {s.free < 0 && <div className="alert"><b>Не хватает {money(-s.free)}.</b> {reserve.free > 0 ? `В резерве свободно ${money(reserve.free)} — повесь на него часть платежей.` : 'Перенеси часть платежей на другую выплату или уменьши сумму.'}</div>}
+        {s.free < 0 && <div className="alert"><b>Не хватает {money(-s.free)}.</b> {reserve.free > 0 ? `В резерве свободно ${money(reserve.free)} — повесь на него часть платежей во вкладке «План».` : 'Перенеси часть платежей на другую выплату или уменьши сумму.'}</div>}
       </div>
 
-      {(reserve.put > 0 || s.fromReserve > 0) && (
-        <button className="resv" type="button" onClick={() => go({ name: 'reserve' })}>
-          <small>Резерв на платежи (отпускные и др.)</small>
-          <b>{money(reserve.free)} свободно</b>
-          <small>{money(reserve.allocated)} разложено по платежам{s.fromReserve ? ` · в этом периоде ${money(s.fromReserve)}` : ''} ›</small>
-        </button>
-      )}
+      <button type="button" className="addbtn" onClick={() => setSpend('new')}><Icon name="plus" w={2.4} />Добавить трату</button>
 
       <div className="block">
-        <div className="bh"><h4>Доходы</h4><button type="button" onClick={() => setIncome('new')}>+ доход</button></div>
-        {!store.settings.payroll?.oklad && <button type="button" className="alert ok" style={{ border: 0, textAlign: 'left', marginBottom: 6 }} onClick={() => go({ name: 'settings' })}>Заполни оклад и отпуска в Настройках → «Зарплата и отпуска» — аванс, зарплата и отпускные будут считаться сами ›</button>}
-        <div className={'payrow' + (s.received ? ' on' : '')} style={{ ['--d-blue' as string]: 'var(--ok)' }}>
-          <button type="button" className="cb" aria-label={`${PAY[p.key].name} пришёл`} onClick={() => setPayout(true)}>{s.received ? CHECK : null}</button>
-          <button type="button" className="nm" onClick={() => setPayout(true)}>{PAY[p.key].name}<small>{s.received ? 'пришёл' : `ожидается ${dayLabel(po.date)}`}{po.source === 'forecast' ? ' · по расчёту' : po.source === 'fixed' ? ' · сумма введена' : ''} · нажми, чтобы посмотреть или поправить</small></button>
-          <span className="sm" style={{ color: s.received ? 'var(--ok)' : undefined }}>{money(s.expected)}</span>
-        </div>
-        {vacs.map((v) => (
-          <button key={v.date} type="button" className="sprow inc" style={{ opacity: 0.85 }} onClick={() => setIncome({ what: 'Отпускные', source: 'Отпускные', amount: Math.round(v.amount), got_on: v.date, target: 'reserve' })}>
-            <span className="ic">○</span>
-            <span>Отпускные<small>ожидаются {dayLabel(v.date)} · {v.days} {plural(v.days, 'день', 'дня', 'дней')} отпуска · нажми, когда придут</small></span>
-            <span className="sm" style={{ color: 'var(--muted)' }}>≈{money(v.amount)}</span>
-          </button>
-        ))}
-        {incomes.map((i) => (
-          <button key={i.id} type="button" className="sprow inc" onClick={() => setIncome(i)}>
-            <span className="ic">+</span>
-            <span>{i.what}<small>{i.source} · {short(i.got_on)}{i.target === 'reserve' ? ' · в резерв' : i.target === 'wish' ? ' · в копилку' : ''}</small></span>
-            <span className="sm">+{money(i.amount)}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="block">
-        <div className="bh"><h4>Платежи</h4><span>осталось {money(s.left)}</span></div>
-        {!open.length && !done.length && <div className="empty" style={{ padding: 12 }}>Платежей с этой выплаты пока нет. Добавь их кнопкой «+ платёж» ниже или загрузи свой план файлом: Настройки → «Перенос из старого органайзера». Со следующего месяца список будет создаваться сам.</div>}
+        <div className="bh"><h4>К оплате до {short(s.end)}</h4><span>{open.length ? money(s.left) : ''}</span></div>
+        {!open.length && !done.length && <div className="empty" style={{ padding: 12 }}>Платежей с этой выплаты нет.</div>}
         {open.map((r) => <PayRow key={r.id} r={r} p={p} onEdit={() => setRow(r)} />)}
         {!open.length && done.length > 0 && <div className="alert ok">Всё оплачено.</div>}
         {done.length > 0 && <button type="button" className="paidtoggle" aria-expanded={showPaid} onClick={() => setShowPaid(!showPaid)}><span>Оплачено {done.length} из {s.rows.length}</span><b>{money(done.reduce((a, r) => a + rowCost(r), 0))} {showPaid ? '▴' : '▾'}</b></button>}
@@ -136,38 +110,124 @@ export function Money() {
       </div>
 
       <div className="block">
-        <div className="bh"><h4>Расходы</h4><span>{money(store.expenses.filter((e) => inRange(e.spent_on)).reduce((a, e) => a + Number(e.amount), 0))}</span></div>
-        <button type="button" className="addbtn" onClick={() => setSpend('new')}><Icon name="plus" w={2.4} />Добавить трату</button>
-        <div className="filters" role="group" aria-label="Что показывать">
-          {([['all', 'Всё'], ['payment', 'Платежи'], ['spend', 'Траты']] as const).map(([k, l]) => <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}>{l}</button>)}
-        </div>
+        <div className="bh"><h4>Траты</h4><span>{money(s.spent + s.saved)}</span></div>
         {byDay.map(([d, list]) => (
           <div key={d}>
             <div className="dayh"><span>{cap1(dayLabel(d))}</span><span>{money(list.reduce((a, e) => a + Number(e.amount), 0))}</span></div>
             {list.map((e) => (
-              <button key={e.id} type="button" className={'sprow' + (e.kind === 'payment' ? ' pay' : e.kind === 'saving' ? ' save' : '')} onClick={() => (e.kind === 'payment' ? setRow(s.rows.find((r) => e.plan_ref?.endsWith(':' + r.id)) || null) : setSpend(e))}>
+              <button key={e.id} type="button" className={'sprow' + (e.kind === 'saving' ? ' save' : '')} onClick={() => setSpend(e)}>
                 <span className="ic">{abbr(e.category)}</span>
-                <span>{e.what}<small>{e.kind === 'payment' ? 'платёж' + (e.from_reserve ? ' из резерва' : '') : e.kind === 'saving' ? 'отложено' : e.what === e.category ? 'трата' : e.category}{e.wb ? ' · ВБ' : ''}</small></span>
+                <span>{e.what}<small>{e.kind === 'saving' ? 'отложено' : e.what === e.category ? 'трата' : e.category}{e.wb ? ' · ВБ' : ''}</small></span>
                 <span className="sm">{money(e.amount)}</span>
               </button>
             ))}
           </div>
         ))}
-        {!byDay.length && <div className="empty" style={{ padding: 14 }}>Пока ничего. Скажи в микрофон «такси 342» или нажми «Добавить трату».</div>}
+        {spends.length > shown.length && <button type="button" className="paidtoggle" onClick={() => setAllSpends(true)}><span>Показать все траты</span><b>ещё {spends.length - shown.length} ▾</b></button>}
+        {!spends.length && <div className="empty" style={{ padding: 14 }}>Пока ничего. Скажи в микрофон «такси 342» или нажми «Добавить трату».</div>}
       </div>
 
-      {catList.length > 0 && (
-        <div className="block">
-          <div className="bh"><h4>Куда ушло</h4><button type="button" onClick={() => go({ name: 'stats' })}>по месяцам ›</button></div>
-          <div className="cats">{catList.map(([c, v]) => <div key={c} className="catline"><span>{c}</span><span>{money(v)}</span><div className="bar"><i style={{ width: `${(v / catList[0][1]) * 100}%` }} /></div></div>)}</div>
-        </div>
-      )}
+      <div className="block">
+        <button type="button" className="paidtoggle" style={{ marginTop: 0 }} aria-expanded={showIncome || waiting} onClick={() => setShowIncome(!showIncome)}>
+          <span>Доходы периода</span><b>{money(s.income)} {showIncome || waiting ? '▴' : '▾'}</b>
+        </button>
+        {(showIncome || waiting) && <>
+          {!store.settings.payroll?.oklad && <button type="button" className="alert ok" style={{ border: 0, textAlign: 'left', margin: '6px 0' }} onClick={() => go({ name: 'settings' })}>Заполни оклад и отпуска в Настройках → «Зарплата и отпуска» — аванс, зарплата и отпускные будут считаться сами ›</button>}
+          <div className={'payrow' + (s.received ? ' on' : '')} style={{ ['--d-blue' as string]: 'var(--ok)' }}>
+            <button type="button" className="cb" aria-label={`${PAY[p.key].name} пришёл`} onClick={() => setPayout(true)}>{s.received ? CHECK : null}</button>
+            <button type="button" className="nm" onClick={() => setPayout(true)}>{PAY[p.key].name}<small>{s.received ? 'пришёл' : `ожидается ${dayLabel(po.date)}`}{po.source === 'forecast' ? ' · по расчёту' : po.source === 'fixed' ? ' · сумма введена' : ''}</small></button>
+            <span className="sm" style={{ color: s.received ? 'var(--ok)' : undefined }}>{money(s.expected)}</span>
+          </div>
+          {vacs.map((v) => (
+            <button key={v.date} type="button" className="sprow inc" style={{ opacity: 0.85 }} onClick={() => setIncome({ what: 'Отпускные', source: 'Отпускные', amount: Math.round(v.amount), got_on: v.date, target: 'reserve' })}>
+              <span className="ic">○</span>
+              <span>Отпускные<small>ожидаются {dayLabel(v.date)} · нажми, когда придут</small></span>
+              <span className="sm" style={{ color: 'var(--muted)' }}>≈{money(v.amount)}</span>
+            </button>
+          ))}
+          {incomes.map((i) => (
+            <button key={i.id} type="button" className="sprow inc" onClick={() => setIncome(i)}>
+              <span className="ic">+</span>
+              <span>{i.what}<small>{i.source} · {short(i.got_on)}{i.target === 'reserve' ? ' · в резерв' : i.target === 'wish' ? ' · в копилку' : ''}</small></span>
+              <span className="sm">+{money(i.amount)}</span>
+            </button>
+          ))}
+          <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setIncome('new')}>+ доход</button>
+        </>}
+      </div>
 
       {payout && <PayoutSheet p={p} onClose={() => setPayout(false)} />}
       {income && <IncomeSheet key={income === 'new' ? 'new' : income.id ?? 'preset'} income={income === 'new' || !income.id ? null : income as Income} preset={income !== 'new' && !income.id ? income : undefined} onClose={() => setIncome(null)} />}
       {row && <RowSheet key={row === 'new' ? 'new' : row.id} p={p} row={row === 'new' ? null : row} onClose={() => setRow(null)} />}
       {spend && <SpendSheet key={spend === 'new' ? 'new' : spend.id} expense={spend === 'new' ? null : spend} onClose={() => setSpend(null)} />}
     </>
+  );
+}
+
+/** Лента выплат вперёд: сколько придёт, какие платежи с неё, сколько останется. */
+function PlanTab() {
+  const store = useStore();
+  const { go } = useApp();
+  const today = todayIso();
+  const [back, setBack] = useState(0);
+  const [sheet, setSheet] = useState<{ p: Period; what: 'payout' | 'new' | PlanRow } | null>(null);
+  const [income, setIncome] = useState<Partial<Income> | null>(null);
+  const reserve = reserveState(store.money_months, store.incomes);
+  let first = periodOf(today);
+  for (let i = 0; i < back; i++) first = prevPeriod(first);
+  const periods: Period[] = [];
+  for (let q = first, i = 0; i < 6 + back; q = nextPeriod(q), i++) periods.push(q);
+  return (
+    <>
+      <button className="resv" type="button" onClick={() => go({ name: 'reserve' })}>
+        <small>Резерв (отпускные и другие отложенные деньги)</small>
+        <b>{money(reserve.free)} свободно</b>
+        <small>{reserve.allocated ? `${money(reserve.allocated)} уже разложено по платежам · ` : ''}нажми, чтобы закрыть платежи из резерва ›</small>
+      </button>
+      <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setBack(back + 2)}>‹ Показать прошлые выплаты</button>
+      {periods.map((q) => <PlanCard key={q.ym + q.key} q={q} onSheet={(what) => setSheet({ p: q, what })} onVacation={setIncome} />)}
+      {sheet?.what === 'payout' && <PayoutSheet p={sheet.p} onClose={() => setSheet(null)} />}
+      {sheet && sheet.what !== 'payout' && <RowSheet key={sheet.what === 'new' ? 'new' : sheet.what.id} p={sheet.p} row={sheet.what === 'new' ? null : sheet.what} onClose={() => setSheet(null)} />}
+      {income && <IncomeSheet key="preset" income={null} preset={income} onClose={() => setIncome(null)} />}
+    </>
+  );
+}
+
+function PlanCard({ q, onSheet, onVacation }: { q: Period; onSheet: (what: 'payout' | 'new' | PlanRow) => void; onVacation: (x: Partial<Income>) => void }) {
+  const store = useStore();
+  const today = todayIso();
+  const s = summaryFor(store, q, today);
+  const po = payoutFor(store, q);
+  const vacs = useExpectedVacations(s.start, s.end);
+  const isNow = samePeriod(q, periodOf(today)), past = s.end < today;
+  const [open, setOpen] = useState(isNow);
+  const unpaid = s.rows.filter((r) => !r.paid);
+  return (
+    <div className="block" style={past ? { opacity: 0.75 } : undefined}>
+      <div className="bh">
+        <h4>{PAY[q.key].name} {short(po.date)}{isNow ? ' · сейчас' : ''}</h4>
+        <button type="button" onClick={() => onSheet('payout')} style={{ textDecoration: 'none', color: s.received ? 'var(--ok)' : 'var(--ink)', fontWeight: 600 }}>{s.received ? '' : '≈'}+{money(s.expected)}</button>
+      </div>
+      {vacs.map((v) => (
+        <button key={v.date} type="button" className="sprow inc" style={{ opacity: 0.85 }} onClick={() => onVacation({ what: 'Отпускные', source: 'Отпускные', amount: Math.round(v.amount), got_on: v.date, target: 'reserve' })}>
+          <span className="ic">○</span>
+          <span>Отпускные {short(v.date)}<small>{v.days} {plural(v.days, 'день', 'дня', 'дней')} отпуска · идут в резерв</small></span>
+          <span className="sm" style={{ color: 'var(--muted)' }}>≈+{money(v.amount)}</span>
+        </button>
+      ))}
+      <button type="button" className="paidtoggle" style={{ marginTop: 0 }} aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>Платежи{unpaid.length < s.rows.length ? ` · оплачено ${s.rows.length - unpaid.length} из ${s.rows.length}` : ` · ${s.rows.length}`}</span>
+        <b>{money(s.planned)}{s.fromReserve ? ` + из резерва ${money(s.fromReserve)}` : ''} {open ? '▴' : '▾'}</b>
+      </button>
+      {open && <>
+        {s.rows.map((r) => <PayRow key={r.id} r={r} p={q} onEdit={() => onSheet(r)} />)}
+        <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => onSheet('new')}>+ платёж</button>
+      </>}
+      <div className="kv" style={{ paddingTop: 6 }}>
+        <span>{past ? 'Осталось' : s.free < 0 ? 'Не хватает' : 'Останется на жизнь'}</span>
+        <b style={s.free < 0 ? { color: 'var(--danger)' } : { color: 'var(--ok)' }}>{s.free < 0 ? money(-s.free) : `${money(s.free)} · ≈${money(s.free / s.days)} в день`}</b>
+      </div>
+    </div>
   );
 }
 
@@ -406,7 +466,7 @@ export function Reserve() {
 }
 
 /** Итоги по месяцам: доходы по источникам, платежи, траты и накопления по категориям, сравнение с прошлым месяцем. */
-export function Stats() {
+export function Stats({ embedded = false }: { embedded?: boolean }) {
   const store = useStore();
   const { go } = useApp();
   const thisYm = todayIso().slice(0, 7);
@@ -458,11 +518,13 @@ export function Stats() {
   ) : null;
   return (
     <>
-      <Hero color="green" title="Итоги" onBack={() => go({ name: 'money' })}>
-        <div className="seg seg3" role="tablist">
-          {([[1, 'Месяц'], [3, '3 месяца'], [12, 'Год']] as const).map(([n, l]) => <button key={n} type="button" role="tab" aria-selected={range === n} onClick={() => setRange(n)}>{l}</button>)}
-        </div>
-      </Hero>
+      {embedded
+        ? <div className="filters" role="group" aria-label="Срок">{([[1, 'Месяц'], [3, '3 месяца'], [12, 'Год']] as const).map(([n, l]) => <button key={n} type="button" aria-pressed={range === n} onClick={() => setRange(n)}>{l}</button>)}</div>
+        : <Hero color="green" title="Итоги" onBack={() => go({ name: 'money' })}>
+          <div className="seg seg3" role="tablist">
+            {([[1, 'Месяц'], [3, '3 месяца'], [12, 'Год']] as const).map(([n, l]) => <button key={n} type="button" role="tab" aria-selected={range === n} onClick={() => setRange(n)}>{l}</button>)}
+          </div>
+        </Hero>}
       <div className="block">
         <div className="bh"><h4>{label}</h4><span>траты · платежи · накопления</span></div>
         <div className="mbars">
