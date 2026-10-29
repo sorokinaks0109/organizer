@@ -23,15 +23,26 @@ describe('прогноз выплат', () => {
     const withVac = { ...p, vacations: [{ start: '2026-11-05', end: '2026-11-13' }] };
     expect(avansForecast('2026-11', withVac).amount).toBeLessThan(avansForecast('2026-11', p).amount / 2);
   });
-  it('отпускные платятся в четверг перед отпуском и вычитаются из расчёта того месяца', () => {
+  it('отпускные платятся в четверг перед отпуском и на зарплату не влияют, отпуск уменьшает только часы', () => {
     const v = { start: '2026-11-05', end: '2026-11-13' };
     expect(vacationPayDate(v)).toBe('2026-10-29');
     const withVac = { ...p, vacations: [v] };
     const pay = vacationPayments(withVac)[0];
     expect(pay.days).toBe(9);
     expect(Math.round(pay.amount)).toBe(Math.round(9 * 6692.28 - Math.round(9 * 6692.28 * 0.13)));
-    const oct = zpForecast('2026-10', withVac, 68000).amount;
-    expect(Math.round(zpForecast('2026-10', p, 68000).amount - oct)).toBe(Math.round(pay.amount));
+    // Октябрь отработан полностью: остаток 13 ноября как обычно, ~62,8 тыс. при авансе 68 600
+    expect(Math.round(zpForecast('2026-10', withVac, 68600).amount)).toBe(Math.round(zpForecast('2026-10', p, 68600).amount));
+    expect(zpForecast('2026-10', withVac, 68600).amount).toBeGreaterThan(62000);
+    // Ноябрь: отпуск 5–13 ноября уменьшает и аванс, и остаток 11 декабря — но не до нуля
+    const a = avansForecast('2026-11', withVac).amount;
+    const dec = zpForecast('2026-11', withVac, a).amount;
+    expect(dec).toBeLessThan(zpForecast('2026-11', p, avansForecast('2026-11', p).amount).amount + 20000);
+    expect(dec).toBeGreaterThan(60000);
+  });
+  it('лишнее, пришедшее вместе с отпускными, вычитается из расчёта (как в августе 2026)', () => {
+    // август: 120 ч из 168,2 + замещение, аванс 66 796,88, вместе с отпускными доплатили 23 252 → 13 сентября ~3 тыс.
+    const aug = zpForecast('2026-08', { ...p, vacations: [{ start: '2026-08-24', end: '2026-09-04' }] }, 66796.88, 23252);
+    expect(aug.amount).toBeLessThan(6000);
   });
   it('день выплаты переносится на рабочий день раньше', () => {
     expect(payDay('2026-06-28', p)).toBe('2026-06-26');

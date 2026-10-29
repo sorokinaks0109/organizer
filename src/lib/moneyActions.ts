@@ -2,9 +2,9 @@
 // оплатила платёж → строка плана отмечена и появился расход; пришла выплата → доход; отложила → копилка.
 import type { useStore } from './store';
 import { todayIso } from './dates';
-import { bounds, incomeRef, monthFrom, PAY, planRef, summarize, type Period } from './money';
-import { avansForecast, DEFAULT_PAYROLL, payDay, payrollReady, zpForecast, type Forecast } from './payroll';
-import type { Income, MoneyMonth, PlanRow, Wish } from './types';
+import { bounds, incomeRef, monthFrom, PAY, planRef, summarize, type PayKey, type Period } from './money';
+import { avansForecast, DEFAULT_PAYROLL, payDay, payrollReady, vacationPayments, zpForecast, type Forecast } from './payroll';
+import type { Expense, Income, MoneyMonth, PlanRow, Wish } from './types';
 
 type Store = ReturnType<typeof useStore>;
 
@@ -87,13 +87,23 @@ export function payoutFor(store: Store, p: Period): Payout {
   const pr = store.settings.payroll;
   const date = payDay(bounds(p).start, pr ?? DEFAULT_PAYROLL);
   const forecast = payrollReady(pr)
-    ? (p.key === 'avans' ? avansForecast(p.ym, pr) : zpForecast(p.ym, pr, payoutFor(store, { ym: p.ym, key: 'avans' }).amount))
+    ? (p.key === 'avans' ? avansForecast(p.ym, pr) : zpForecast(p.ym, pr, payoutFor(store, { ym: p.ym, key: 'avans' }).amount, extraWithVacation(store, p.ym)))
     : null;
   const stored = Number(m.income[p.key]) || 0;
   if (m.got[p.key]) return { amount: stored, source: 'actual', forecast, date };
   if (m.income.fixed?.[p.key]) return { amount: stored, source: 'fixed', forecast, date };
   if (forecast) return { amount: Math.round(forecast.amount), source: 'forecast', forecast, date };
   return { amount: stored, source: 'plan', forecast, date };
+}
+
+/** Если в месяце ym отпускных пришло больше расчёта, разница — это часть зарплаты, выплаченная раньше. */
+function extraWithVacation(store: Store, ym: string) {
+  const pr = store.settings.payroll;
+  if (!pr) return 0;
+  const expected = vacationPayments(pr).filter((v) => v.date.slice(0, 7) === ym).reduce((a, v) => a + v.amount, 0);
+  if (!expected) return 0;
+  const got = store.incomes.filter((i) => i.source === 'Отпускные' && i.got_on.slice(0, 7) === ym).reduce((a, i) => a + Number(i.amount), 0);
+  return got > expected + 500 ? Math.round(got - expected) : 0;
 }
 
 /** Итог периода с учётом прогноза выплаты. */
@@ -134,4 +144,17 @@ export async function deleteIncome(store: Store, i: Income) {
 export async function saveToWish(store: Store, w: Wish, amount: number) {
   await store.insert('expenses', { what: `Копилка: ${w.title}`, amount, category: 'Накопления', wb: false, spent_on: todayIso(), kind: 'saving' });
   await store.update('wishes', { id: w.id }, { saved_sum: (Number(w.saved_sum) || 0) + amount });
+}
+
+/** Удалить расход так, чтобы всё связанное откатилось: копилка желания уменьшается, оплаченный платёж снова «к оплате». */
+export async function deleteExpense(store: Store, e: Expense) {
+  await store.remove('expenses', { id: e.id });
+  if (e.kind === 'saving') {
+    const w = store.wishes.find((x) => `Копилка: ${x.title}` === e.what);
+    if (w) await store.update('wishes', { id: w.id }, { saved_sum: Math.max(0, (Number(w.saved_sum) || 0) - Number(e.amount)) });
+  }
+  if (e.kind === 'payment' && e.plan_ref) {
+    const [ym, key, rowId] = e.plan_ref.split(':') as [string, PayKey, string];
+    await saveMonth(store, ym, (m) => { m.plan[key] = (m.plan[key] || []).map((r) => (r.id === rowId ? { id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false, reserve: r.reserve, once: r.once } : r)); });
+  }
 }

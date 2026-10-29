@@ -3,8 +3,8 @@
 //  • районный коэффициент и северная надбавка — процент сверху (у Ксении 30 % + 30 %);
 //  • НДФЛ 13 % считается отдельно с оклада и с надбавок, каждый округляется до рубля;
 //  • аванс (28-го) — за часы с 1 по 15 число, НДФЛ удержан;
-//  • расчёт за месяц (13-го следующего) — всё за месяц минус аванс, минус НПО, минус отпускные,
-//    выплаченные в этом месяце, плюс отпускные за дни отпуска этого месяца;
+//  • расчёт за месяц (13-го следующего) — оплата за отработанные часы минус аванс и НПО;
+//    отпускные платятся отдельно и в расчёт не входят, отпуск только уменьшает часы;
 //  • отпускные = календарные дни отпуска без праздников × средний дневной заработок − НДФЛ,
 //    платятся в четверг перед отпуском.
 // Проверено на листках за июнь и август 2026: расхождение — до рубля.
@@ -91,12 +91,6 @@ function vacationNet(days: number, p: Payroll) {
   return r2(gross - Math.round(gross * p.ndflPct / 100));
 }
 
-/** Дни отпуска внутри месяца (праздники не считаются). */
-function vacationDaysIn(ym: string, v: Vacation) {
-  let n = 0;
-  for (let d = 1; d <= daysOfMonth(ym); d++) { const day = dayOf(ym, d); if (day >= v.start && day <= v.end && !isHoliday(day)) n++; }
-  return n;
-}
 function vacationDaysTotal(v: Vacation) {
   let n = 0;
   for (let d = parseIso(v.start); iso(d) <= v.end; d = addDays(d, 1)) if (!isHoliday(iso(d))) n++;
@@ -136,20 +130,19 @@ export function avansForecast(ym: string, p: Payroll): Forecast {
   return { amount: n.net, lines: [[`Оклад за ${fmtH(h)} ч из ${fmtH(norm)}`, base], [`Надбавки ${p.northPct} %`, r2(n.gross - base)], ['НДФЛ', -n.tax]] };
 }
 
-/** Расчёт за месяц ym (платится 13-го следующего месяца). avans — фактический или ожидаемый аванс этого месяца. */
-export function zpForecast(ym: string, p: Payroll, avans: number): Forecast {
+/** Расчёт за месяц ym (платится 13-го следующего месяца): оплата за отработанные часы минус НПО и аванс.
+ *  Отпускные платятся отдельно и в расчёт не входят — отпуск только уменьшает отработанные часы.
+ *  extraPaid — сколько вместе с отпускными пришло сверх них (так бывает: в августе 2026 перед отпуском
+ *  выплатили часть зарплаты, и 13 сентября пришёл почти ноль) — вычитается из этого расчёта. */
+export function zpForecast(ym: string, p: Payroll, avans: number, extraPaid = 0): Forecast {
   const norm = monthHours(ym, p), h = monthHours(ym, p, 1, 31, true);
   const base = r2(p.oklad * h / norm);
   const n = netOf(base, p);
-  const lines: [string, number][] = [[`Оклад за ${fmtH(h)} ч из ${fmtH(norm)}`, base], [`Надбавки ${p.northPct} %`, r2(n.gross - base)], ['НДФЛ', -n.tax]];
+  const lines: [string, number][] = [[`Оклад за ${fmtH(h)} ч из ${fmtH(norm)}${h < norm ? ' (без дней отпуска)' : ''}`, base], [`Надбавки ${p.northPct} %`, r2(n.gross - base)], ['НДФЛ', -n.tax]];
   let total = n.net;
-  for (const v of p.vacations) {
-    const days = vacationDaysIn(ym, v);
-    if (days && p.avgDaily) { const x = vacationNet(days, p); total += x; lines.push([`Отпуск ${days} дн. в этом месяце`, x]); }
-  }
-  for (const vp of vacationPayments(p)) if (vp.date.slice(0, 7) === ym) { total -= vp.amount; lines.push([`Отпускные уже выплачены ${parseIso(vp.date).getDate()}-го`, -vp.amount]); }
   if (p.npo) { total -= p.npo; lines.push(['НПО', -p.npo]); }
   total -= avans; lines.push(['Аванс', -avans]);
+  if (extraPaid > 0) { total -= extraPaid; lines.push(['Выплачено раньше вместе с отпускными', -extraPaid]); }
   return { amount: r2(Math.max(0, total)), lines };
 }
 

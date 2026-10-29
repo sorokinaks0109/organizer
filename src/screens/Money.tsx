@@ -5,7 +5,7 @@ import { useApp } from '../lib/context';
 import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, todayIso, WD, ymShift, ymTitle } from '../lib/dates';
 import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type PayKey, type Period, type Summary } from '../lib/money';
 import { vacationPayments } from '../lib/payroll';
-import { addIncome, confirmPayout, deleteIncome, deleteRow, moveRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
+import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, moveRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
 import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 
@@ -332,7 +332,11 @@ function SpendSheet({ expense, onClose }: { expense: Expense | null; onClose: ()
         {['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0'].map((k) => <button key={k} type="button" onClick={() => key(k)}>{k}</button>)}
         <button type="button" className="ok" disabled={!(Number(amount) > 0)} onClick={save}>Готово</button>
       </div>
-      {expense && <button className="btn ghost danger" type="button" onClick={async () => { await store.remove('expenses', { id: expense.id }); onClose(); }}>Удалить трату</button>}
+      {expense && <button className="btn ghost danger" type="button" onClick={async () => {
+        await deleteExpense(store, expense); onClose();
+        const per = periodOf(expense.spent_on), cur = periodOf(todayIso());
+        toast(samePeriod(per, cur) ? `Удалено — ${money(expense.amount)} снова свободны` : `Удалено — ${money(expense.amount)} вернулись в период «${PAY[per.key].name} ${short(bounds(per).start)}», трата была ${short(expense.spent_on)}`);
+      }}>Удалить трату</button>}
     </Sheet>
   );
 }
