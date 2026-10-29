@@ -68,3 +68,15 @@ describe('итог периода', () => {
     expect(m.income).toEqual({});
   });
 });
+
+import { payoutFor } from '../src/lib/moneyActions';
+describe('зарплата 13-го и отпускные', () => {
+  const base = { ym: '2026-10', income: { avans: 69796 }, got: { avans: true }, plan: {} };
+  const settings = { payroll: { oklad: 98000, northPct: 60, ndflPct: 13, npo: 5000, hoursMonThu: 8.2, hoursFri: 7.2, avgDaily: 6681.42,
+    vacations: [{ start: '2026-11-05', end: '2026-11-06' }, { start: '2026-11-09', end: '2026-11-13' }] } };
+  const store = (incomes: Partial<Income>[]) => ({ money_months: [base], settings, expenses: [], incomes } as unknown as Parameters<typeof payoutFor>[0]);
+  it('отпускные за ноябрь, пришедшие 29 октября, не уменьшают зарплату за октябрь — даже если пришло больше расчёта', () => {
+    const z = payoutFor(store([{ source: 'Отпускные', amount: 69735, got_on: '2026-10-29', target: 'reserve' }]), { ym: '2026-10', key: 'zp' });
+    expect(Math.round(z.amount)).toBe(Math.round(136416 - 5000 - 69796));
+  });
+});

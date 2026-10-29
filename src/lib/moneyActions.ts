@@ -98,11 +98,13 @@ export function payoutFor(store: Store, p: Period): Payout {
   return { amount: stored || Number(prev?.income[p.key]) || 0, source: 'plan', forecast, date };
 }
 
-/** Если в месяце ym отпускных пришло больше расчёта, разница — это часть зарплаты, выплаченная раньше. */
+/** Если отпуск начинается в том же месяце ym, что и выплата отпускных, и вместе с ними пришло больше расчёта,
+ *  разница — часть зарплаты за этот месяц, выплаченная раньше (как в августе 2026). Отпуск следующего месяца,
+ *  оплаченный заранее, к расчёту за ym отношения не имеет. */
 function extraWithVacation(store: Store, ym: string) {
   const pr = store.settings.payroll;
   if (!pr) return 0;
-  const expected = vacationPayments(pr).filter((v) => v.date.slice(0, 7) === ym).reduce((a, v) => a + v.amount, 0);
+  const expected = vacationPayments(pr).filter((v) => v.date.slice(0, 7) === ym && v.vacation.start.slice(0, 7) === ym).reduce((a, v) => a + v.amount, 0);
   if (!expected) return 0;
   const got = store.incomes.filter((i) => i.source === 'Отпускные' && i.got_on.slice(0, 7) === ym).reduce((a, i) => a + Number(i.amount), 0);
   return got > expected + 500 ? Math.round(got - expected) : 0;
