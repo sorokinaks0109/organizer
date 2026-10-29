@@ -6,7 +6,8 @@ import { StoreProvider, useStore } from './lib/store';
 import { useGoogleEvents, type CalEvent } from './lib/gcal';
 import { App as AppCtxProvider, type View } from './lib/context';
 import type { Area, Item } from './lib/types';
-import { Icon, useToast } from './components/ui';
+import { Icon, Sheet, useToast } from './components/ui';
+import { DEFAULT_PAYROLL, type Payroll } from './lib/payroll';
 import { PinGate } from './components/Lock';
 import { Login, NotConfigured } from './screens/Login';
 import { Today } from './screens/Today';
@@ -54,6 +55,16 @@ function Shell() {
   const [item, setItem] = useState<{ it: Item | null; preset?: Partial<Item> } | null>(null);
   const [event, setEvent] = useState<CalEvent | null>(null);
   const [capture, setCapture] = useState<{ area: string | null } | null>(null);
+  // Ссылка с готовыми зарплатными данными (#setup=…): спрашиваем и сохраняем в настройки.
+  const [setup, setSetup] = useState<Payroll | null>(() => {
+    const m = location.hash.match(/^#setup=([\w-]+)/);
+    if (!m) return null;
+    try {
+      const raw = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))) as Partial<Payroll>;
+      return { ...DEFAULT_PAYROLL, ...Object.fromEntries(Object.entries(raw).filter(([k]) => k in DEFAULT_PAYROLL)) } as Payroll;
+    } catch { return null; }
+  });
+  const closeSetup = () => { setSetup(null); history.replaceState(history.state, '', location.pathname + location.search); };
 
   // Кнопка «Назад» на телефоне возвращает на прошлый экран, а не закрывает приложение.
   const go = useCallback((v: View) => { history.pushState(v, ''); setView(v); window.scrollTo(0, 0); }, []);
@@ -129,6 +140,19 @@ function Shell() {
       </nav>
       {item && <ItemSheet key={item.it?.id ?? 'new'} item={item.it} preset={item.preset} onClose={() => setItem(null)} />}
       {event && <EventSheet key={event.id} e={event} onClose={() => setEvent(null)} />}
+      {setup && store.loaded && (
+        <Sheet open onClose={closeSetup}>
+          <h3>Зарплатные данные</h3>
+          <span className="mini">Из ссылки, по твоим расчётным листкам. По ним будут считаться аванс, зарплата и отпускные. Поменять можно в Настройках → «Зарплата и отпуска».</span>
+          <div className="kv"><span>Оклад</span><b>{setup.oklad.toLocaleString('ru-RU')} ₽</b></div>
+          <div className="kv"><span>Районный + северная</span><b>{setup.northPct} %</b></div>
+          <div className="kv"><span>НДФЛ / НПО</span><b>{setup.ndflPct} % / {setup.npo.toLocaleString('ru-RU')} ₽</b></div>
+          <div className="kv"><span>График</span><b>пн–чт {String(setup.hoursMonThu).replace('.', ',')} ч, пт {String(setup.hoursFri).replace('.', ',')} ч</b></div>
+          <div className="kv"><span>Средний дневной</span><b>{setup.avgDaily.toLocaleString('ru-RU')} ₽</b></div>
+          {setup.vacations.map((v) => <div key={v.start} className="kv"><span>Отпуск</span><b>{v.start.split('-').reverse().join('.')} — {v.end.split('-').reverse().join('.')}</b></div>)}
+          <button className="btn primary" type="button" onClick={async () => { await store.saveSettings({ payroll: setup }); closeSetup(); toast('Сохранено — аванс и зарплата теперь считаются сами'); go({ name: 'money' }); }}>Сохранить</button>
+        </Sheet>
+      )}
       <Capture key={capture ? 'open' : 'closed'} open={!!capture} preferArea={capture?.area} onClose={() => setCapture(null)} />
     </AppCtxProvider.Provider>
   );

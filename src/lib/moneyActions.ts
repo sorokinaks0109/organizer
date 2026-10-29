@@ -93,7 +93,9 @@ export function payoutFor(store: Store, p: Period): Payout {
   if (m.got[p.key]) return { amount: stored, source: 'actual', forecast, date };
   if (m.income.fixed?.[p.key]) return { amount: stored, source: 'fixed', forecast, date };
   if (forecast) return { amount: Math.round(forecast.amount), source: 'forecast', forecast, date };
-  return { amount: stored, source: 'plan', forecast, date };
+  // Без зарплатных настроек — сумма из ближайшего прошлого месяца, где она была.
+  const prev = store.money_months.filter((x) => x.ym < p.ym && Number(x.income[p.key]) > 0).sort((a, b) => b.ym.localeCompare(a.ym))[0];
+  return { amount: stored || Number(prev?.income[p.key]) || 0, source: 'plan', forecast, date };
 }
 
 /** Если в месяце ym отпускных пришло больше расчёта, разница — это часть зарплаты, выплаченная раньше. */
