@@ -535,7 +535,10 @@ export function Stats({ embedded = false }: { embedded?: boolean }) {
   const spBy = group(ex.filter((e) => e.kind === 'spend' && !isSaving(e)), (e) => e.category, (e) => Number(e.amount));
   const svBy = group(ex.filter(isSaving), (e) => e.category, (e) => Number(e.amount));
   const prevMonths = months.map((m) => ymShift(m, -range));
-  const prevSp = Object.fromEntries(group(store.expenses.filter((e) => e.kind === 'spend' && !isSaving(e) && inM(e.spent_on, prevMonths)), (e) => e.category, (e) => Number(e.amount)));
+  // Платежи и траты — в одном списке по категориям: «Страхование» и плановым платежом, и разовой тратой — одна строка.
+  const isOut = (e: Expense) => (e.kind === 'payment' || e.kind === 'spend') && !isSaving(e);
+  const outBy = group(ex.filter(isOut), (e) => e.category, (e) => Number(e.amount));
+  const prevOut = Object.fromEntries(group(store.expenses.filter((e) => isOut(e) && inM(e.spent_on, prevMonths)), (e) => e.category, (e) => Number(e.amount)));
   const totalIn = sumOf(incBy), totalOut = sumOf(payBy) + sumOf(spBy), totalSv = sumOf(svBy);
   // Столбики за 12 месяцев: платежи, траты, накопления.
   const bars = Array.from({ length: 12 }, (_, i) => ymShift(thisYm, i - 11)).map((m) => {
@@ -549,14 +552,14 @@ export function Stats({ embedded = false }: { embedded?: boolean }) {
       <div className="bh"><h4>{title}</h4><span>{money(sumOf(list))}</span></div>
       <div className="cats">{list.map(([c, v]) => {
         const was = cmp?.[c] ?? 0, diff = v - was;
-        const items = ex.filter((e) => e.category === c && (title !== 'Траты' || e.kind === 'spend')).sort((a, b) => b.spent_on.localeCompare(a.spent_on));
+        const items = ex.filter((e) => e.category === c && (title === 'Инвестиции и накопления' ? isSaving(e) : isOut(e))).sort((a, b) => b.spent_on.localeCompare(a.spent_on));
         return (
           <div key={c}>
             <button type="button" className="catline" style={{ ['--cbar' as string]: color }} aria-expanded={open === title + c} onClick={() => setOpen(open === title + c ? null : title + c)}>
               <span>{c}{cmp && was > 0 && Math.abs(diff) >= 500 ? <span className={'cmp ' + (diff > 0 ? 'up' : 'down')}> {diff > 0 ? '▲' : '▼'} {money(Math.abs(diff))}</span> : null}</span>
               <span>{money(v)}</span><div className="bar"><i style={{ width: `${(v / list[0][1]) * 100}%` }} /></div>
             </button>
-            {open === title + c && items.slice(0, 30).map((e) => <div key={e.id} className="kv mini" style={{ padding: '3px 0 3px 8px' }}><span>{short(e.spent_on)} · {e.what}</span><span>{money(e.amount)}</span></div>)}
+            {open === title + c && items.slice(0, 30).map((e) => <div key={e.id} className="kv mini" style={{ padding: '3px 0 3px 8px' }}><span>{short(e.spent_on)} · {e.what}{e.kind === 'payment' ? ' · платёж' : ''}</span><span>{money(e.amount)}</span></div>)}
           </div>
         );
       })}</div>
@@ -591,11 +594,11 @@ export function Stats({ embedded = false }: { embedded?: boolean }) {
         <div className="kv"><span>Осталось</span><b style={totalIn - totalOut - totalSv < 0 ? { color: 'var(--danger)' } : undefined}>{money(totalIn - totalOut - totalSv)}</b></div>
       </div>
       {incBy.length > 0 && <div className="block"><div className="bh"><h4>Доходы по источникам</h4><span>{money(totalIn)}</span></div><div className="cats">{incBy.map(([c, v]) => <div key={c} className="catline" style={{ ['--cbar' as string]: 'var(--ok)' }}><span>{c}</span><span>{money(v)}</span><div className="bar"><i style={{ width: `${(v / incBy[0][1]) * 100}%` }} /></div></div>)}</div></div>}
-      <Cats title="Траты" list={spBy} color="var(--d-orange)" cmp={prevSp} />
-      <Cats title="Платежи" list={payBy} color="var(--d-blue)" />
+      <Cats title="Расходы по категориям" list={outBy} color="var(--d-orange)" cmp={prevOut} />
+      {outBy.length > 0 && <span className="mini">Здесь и платежи, и траты. Платежи — {money(sumOf(payBy))}, траты — {money(sumOf(spBy))}. Нажми на категорию, чтобы увидеть, из чего она сложилась.</span>}
       <Cats title="Инвестиции и накопления" list={svBy} color="var(--d-purple)" />
       {!ex.length && !inc.length && <div className="empty">За этот срок записей нет.</div>}
-      {spBy.length > 0 && range === 1 && <span className="mini">▲▼ — разница с прошлым месяцем, если больше 500 ₽.</span>}
+      {outBy.length > 0 && range === 1 && <span className="mini">▲▼ — разница с прошлым месяцем, если больше 500 ₽.</span>}
     </>
   );
 }
