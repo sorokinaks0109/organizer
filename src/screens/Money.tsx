@@ -3,9 +3,9 @@ import { useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, todayIso, WD, ymShift, ymTitle } from '../lib/dates';
-import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type Period, type Summary } from '../lib/money';
+import { bounds, nextPeriod, PAY, periodOf, planRef, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type PayKey, type Period, type Summary } from '../lib/money';
 import { vacationPayments } from '../lib/payroll';
-import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, moveRow, payoutFor, payRow, resetExpected, saveRow, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
+import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, monthOrNew, moveRow, payoutFor, payRow, reserveToLive, resetExpected, saveRow, saveRowForward, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
 import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 
@@ -291,14 +291,25 @@ export function IncomeSheet({ income, preset, onClose }: { income: Income | null
   const [date, setDate] = useState(base?.got_on && base.got_on <= todayIso() ? base.got_on : todayIso());
   const [target, setTarget] = useState<Income['target']>(base?.target || 'live');
   const [wish, setWish] = useState(income?.wish_id || '');
+  const [part, setPart] = useState('');   // сколько из суммы в резерв; пусто — всё
   const wishes = store.wishes.filter((x) => x.status !== 'done');
+  const toReserve = target === 'reserve' ? Math.min(Number(sum) || 0, part === '' ? Number(sum) || 0 : Number(part) || 0) : 0;
   const save = async () => {
     const amount = Number(sum); if (!(amount > 0)) return;
     if (income) await deleteIncome(store, income);
-    await addIncome(store, { what: what.trim() || source, amount, source, got_on: date, target, wish_id: target === 'wish' ? wish || null : null });
+    const name = what.trim() || source;
+    if (target === 'reserve') {
+      const rest = amount - toReserve;
+      if (toReserve > 0) await addIncome(store, { what: name, amount: toReserve, source, got_on: date, target: 'reserve' });
+      if (rest > 0) await addIncome(store, { what: name, amount: rest, source, got_on: date, target: 'live' });
+      onClose();
+      if (toReserve > 0) { toast(rest > 0 ? `${money(toReserve)} в резерв, ${money(rest)} на жизнь. Выбери, какие платежи закроет резерв` : 'В резерве. Теперь выбери, какие платежи он закроет'); go({ name: 'reserve' }); }
+      else toast(`+${money(rest)} на жизнь`);
+      return;
+    }
+    await addIncome(store, { what: name, amount, source, got_on: date, target, wish_id: target === 'wish' ? wish || null : null });
     onClose();
-    if (target === 'reserve') { toast('В резерве. Теперь выбери, какие платежи он закроет'); go({ name: 'reserve' }); }
-    else toast(`+${money(amount)} в доходах`);
+    toast(`+${money(amount)} в доходах`);
   };
   return (
     <Sheet open onClose={onClose}>
@@ -315,6 +326,12 @@ export function IncomeSheet({ income, preset, onClose }: { income: Income | null
         <button type="button" aria-pressed={target === 'reserve'} onClick={() => setTarget('reserve')}>Наперёд на платежи<small>в резерв: выберешь, какие платежи следующих месяцев он закроет</small></button>
         {wishes.length > 0 && <button type="button" aria-pressed={target === 'wish'} onClick={() => setTarget('wish')}>В копилку желания<small>сумма прибавится к накопленному</small></button>}
       </div>
+      {target === 'reserve' && Number(sum) > 0 && (
+        <label className="lbl" style={{ flex: 'none' }}>Сколько из них в резерв, ₽
+          <input className="field" type="number" inputMode="numeric" value={part} placeholder={`всё — ${money(Number(sum))}`} onChange={(e) => setPart(e.target.value)} />
+          <small className="mini">{Number(sum) - toReserve > 0 ? `${money(toReserve)} в резерв, ${money(Number(sum) - toReserve)} — на жизнь сейчас` : 'вся сумма уйдёт в резерв'}</small>
+        </label>
+      )}
       {target === 'wish' && <select className="field" value={wish} aria-label="Желание" onChange={(e) => setWish(e.target.value)}><option value="">выбери желание</option>{wishes.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select>}
       <div className="row">
         <button className="btn primary" type="button" disabled={!(Number(sum) > 0) || (target === 'wish' && !wish)} onClick={save}>Сохранить</button>
@@ -325,7 +342,7 @@ export function IncomeSheet({ income, preset, onClose }: { income: Income | null
   );
 }
 
-function RowSheet({ p, row, onClose }: { p: Period; row: PlanRow | null; onClose: () => void }) {
+export function RowSheet({ p, row, onClose, note }: { p: Period; row: PlanRow | null; onClose: () => void; note?: string }) {
   const store = useStore();
   const cats = usePlanCats();
   const [name, setName] = useState(row?.name || '');
@@ -334,12 +351,17 @@ function RowSheet({ p, row, onClose }: { p: Period; row: PlanRow | null; onClose
   const [cat, setCat] = useState(row?.cat || cats[0]);
   const [once, setOnce] = useState(!!row?.once);
   const [reserve, setRes] = useState(!!row?.reserve);
+  const [forward, setForward] = useState(!row?.once);
+  const [busy, setBusy] = useState(false);
+  const num = (s: string) => Number(s.replace(/\s/g, '').replace(',', '.'));
+  const ok = !!name.trim() && num(sum) > 0;
   const save = async () => {
-    if (!name.trim() || !(Number(sum) > 0)) return;
-    const next: PlanRow = { ...(row || { id: crypto.randomUUID(), paid: false }), name: name.trim(), sum: Number(sum), cat, once, reserve };
-    if (next.paid) next.paid_sum = Number(paidSum) || next.sum;
-    await saveRow(store, p, next);
-    if (row && row.reserve !== reserve) await setReserve(store, p, row.id, reserve);
+    if (!ok || busy) return;
+    setBusy(true);
+    const next: PlanRow = { ...(row || { id: crypto.randomUUID(), paid: false }), name: name.trim(), sum: num(sum), cat, once, reserve };
+    if (next.paid) next.paid_sum = num(paidSum) || next.sum;
+    if (forward && !once) await saveRowForward(store, p, next); else await saveRow(store, p, next);
+    if (row && row.reserve !== reserve && row.paid) await store.update('expenses', { plan_ref: planRef(p, row.id) }, { from_reserve: reserve });
     onClose();
   };
   return (
@@ -347,17 +369,18 @@ function RowSheet({ p, row, onClose }: { p: Period; row: PlanRow | null; onClose
       <h3>{row ? row.name : `Новый платёж с выплаты «${PAY[p.key].name}»`}</h3>
       <div className="row">
         <label className="lbl" style={{ flex: '2 1 160px' }}>Название<input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="ТСЖ" /></label>
-        <label className="lbl">По плану, ₽<input className="field" type="number" inputMode="numeric" value={sum} onChange={(e) => setSum(e.target.value)} /></label>
-        {row?.paid && <label className="lbl">Оплачено, ₽<input className="field" type="number" inputMode="numeric" value={paidSum} onChange={(e) => setPaidSum(e.target.value)} /></label>}
+        <label className="lbl">По плану, ₽<input className="field" inputMode="decimal" value={sum} onChange={(e) => setSum(e.target.value)} /></label>
+        {row?.paid && <label className="lbl">Оплачено, ₽<input className="field" inputMode="decimal" value={paidSum} onChange={(e) => setPaidSum(e.target.value)} /></label>}
       </div>
       <label className="lbl" style={{ flex: 'none' }}>Категория<select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>{cats.map((c) => <option key={c}>{c}</option>)}</select></label>
       <label className="toggle-row"><input type="checkbox" className="check" checked={once} onChange={(e) => setOnce(e.target.checked)} /><span>Разовый<br /><small className="mini">в следующий месяц не переносится</small></span></label>
+      {!once && <label className="toggle-row"><input type="checkbox" className="check" checked={forward} onChange={(e) => setForward(e.target.checked)} /><span>И в следующих месяцах<br /><small className="mini">{note || 'постоянный платёж: новая сумма и название — дальше тоже'}</small></span></label>}
       <label className="toggle-row"><input type="checkbox" className="check" checked={reserve} onChange={(e) => setRes(e.target.checked)} /><span>Оплачу из резерва<br /><small className="mini">не уменьшает деньги этой выплаты</small></span></label>
       <div className="row">
-        <button className="btn primary" type="button" onClick={save}>Сохранить</button>
+        <button className="btn primary" type="button" disabled={!ok || busy} onClick={save}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
         <span style={{ flex: 1 }} />
         {row && <button className="btn" type="button" onClick={async () => { await moveRow(store, p, row); onClose(); }}>{p.key === 'avans' ? 'Платить с зарплаты' : 'Платить с аванса'}</button>}
-        {row && <button className="btn ghost danger" type="button" onClick={async () => { await deleteRow(store, p, row); onClose(); }}>Удалить</button>}
+        {row && <button className="btn ghost danger" type="button" onClick={async () => { await deleteRow(store, p, row, forward && !once); onClose(); }}>{forward && !once ? 'Удалить совсем' : 'Удалить'}</button>}
       </div>
     </Sheet>
   );
@@ -378,9 +401,13 @@ function SpendSheet({ expense, onClose }: { expense: Expense | null; onClose: ()
   const [what, setWhat] = useState(expense?.what || '');
   const [date, setDate] = useState(expense?.spent_on || todayIso());
   const [wb, setWb] = useState(!!expense?.wb);
-  const key = (k: string) => setAmount((a) => (k === '⌫' ? a.slice(0, -1) : a.length < 7 ? (a === '0' ? k : a + k) : a));
+  // При правке первая цифра заменяет старую сумму, а не дописывается к ней.
+  const [fresh, setFresh] = useState(!!expense);
+  const key = (k: string) => { const f = fresh; setFresh(false); setAmount((a) => (k === '⌫' ? (f ? '' : a.slice(0, -1)) : f ? k : a.length < 7 ? (a === '0' ? k : a + k) : a)); };
+  const [busy, setBusy] = useState(false);
   const save = async () => {
-    const n = Number(amount); if (!(n > 0)) return;
+    const n = Number(amount); if (!(n > 0) || busy) return;
+    setBusy(true);
     const row = { what: what.trim() || cat, amount: n, category: cat, spent_on: date, wb };
     if (expense) await store.update('expenses', { id: expense.id }, row);
     else await store.insert('expenses', { ...row, kind: 'spend' });
@@ -406,7 +433,7 @@ function SpendSheet({ expense, onClose }: { expense: Expense | null; onClose: ()
       </div>
       <div className="keys">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0'].map((k) => <button key={k} type="button" onClick={() => key(k)}>{k}</button>)}
-        <button type="button" className="ok" disabled={!(Number(amount) > 0)} onClick={save}>Готово</button>
+        <button type="button" className="ok" disabled={!(Number(amount) > 0) || busy} onClick={save}>Готово</button>
       </div>
       {expense && <button className="btn ghost danger" type="button" onClick={async () => {
         await deleteExpense(store, expense); onClose();
@@ -428,6 +455,15 @@ export function Reserve() {
   for (let q = periodOf(today), i = 0; i < 6; q = nextPeriod(q), i++) periods.push(q);
   const sums: Summary[] = periods.map((q) => summaryFor(store, q, today));
   const put = store.incomes.filter((i) => i.target === 'reserve').sort((a, b) => b.got_on.localeCompare(a.got_on));
+  const [edit, setEdit] = useState<Income | null>(null);
+  const [out, setOut] = useState<string | null>(null);
+  const moveOut = async () => {
+    const n = Math.min(Number(out) || 0, Math.max(0, r.balance));
+    if (!(n > 0)) return;
+    const moved = await reserveToLive(store, n);
+    setOut(null);
+    toast(`${money(moved)} из резерва — на жизнь, прибавились к «можно тратить в день»`);
+  };
   const toggle = async (q: Period, row: PlanRow) => {
     if (!row.reserve && rowCost(row) > r.free) toast(`В резерве свободно только ${money(r.free)} — платёж уйдёт в минус резерва`);
     await setReserve(store, q, row.id, !row.reserve);
@@ -438,6 +474,7 @@ export function Reserve() {
         <div className="big-num" style={{ color: 'var(--d-purple)' }}>{money(r.free)}</div>
         <span className="mini" style={{ color: 'var(--d-purple)' }}>свободно · всего отложено {money(r.put)}, разложено {money(r.allocated)}, уже оплачено из резерва {money(r.put - r.balance)}</span>
       </Hero>
+      {r.free > 0 && <button className="btn" type="button" style={{ alignSelf: 'flex-start' }} onClick={() => setOut(String(Math.round(r.free)))}>Перевести остаток на жизнь</button>}
       <span className="mini">Отметь платежи, которые закроешь из резерва. В их периоде они не будут съедать аванс или зарплату — свободных денег там станет больше.</span>
       {sums.map((s, i) => {
         const q = periods[i];
@@ -458,9 +495,18 @@ export function Reserve() {
       })}
       <div className="block">
         <div className="bh"><h4>Что отложено</h4></div>
-        {put.map((i) => <div key={i.id} className="sprow inc"><span className="ic">+</span><span>{i.what}<small>{i.source} · {short(i.got_on)}</small></span><span className="sm">+{money(i.amount)}</span></div>)}
+        {put.map((i) => <button key={i.id} type="button" className="sprow inc" onClick={() => setEdit(i)}><span className="ic">+</span><span>{i.what}<small>{i.source} · {short(i.got_on)} · нажми, чтобы поправить</small></span><span className="sm">+{money(i.amount)}</span></button>)}
         {!put.length && <div className="mini">Пока ничего. Пришли отпускные — добавь доход и выбери «Наперёд на платежи».</div>}
       </div>
+      {edit && <IncomeSheet key={edit.id} income={edit} onClose={() => setEdit(null)} />}
+      {out !== null && (
+        <Sheet open onClose={() => setOut(null)}>
+          <h3>Из резерва на жизнь</h3>
+          <span className="mini">Сумма уйдёт из резерва и прибавится к деньгам текущей выплаты. Свободно в резерве {money(r.free)}.</span>
+          <input className="field amount" type="number" inputMode="numeric" value={out} aria-label="Сумма" onChange={(e) => setOut(e.target.value)} />
+          <div className="row"><button className="btn primary" type="button" disabled={!(Number(out) > 0)} onClick={moveOut}>Перевести</button></div>
+        </Sheet>
+      )}
     </>
   );
 }
@@ -551,5 +597,34 @@ export function Stats({ embedded = false }: { embedded?: boolean }) {
       {!ex.length && !inc.length && <div className="empty">За этот срок записей нет.</div>}
       {spBy.length > 0 && range === 1 && <span className="mini">▲▼ — разница с прошлым месяцем, если больше 500 ₽.</span>}
     </>
+  );
+}
+
+/** Настройки → «Постоянные платежи»: правка суммы и названия сразу на все месяцы, начиная со следующего. */
+export function RecurringCard() {
+  const store = useStore();
+  const ym = ymShift(periodOf(todayIso()).ym, 1);
+  const m = monthOrNew(store, ym);
+  const [edit, setEdit] = useState<{ key: PayKey; row: PlanRow | null } | null>(null);
+  return (
+    <div className="card">
+      <div className="card-t">Постоянные платежи</div>
+      <span className="mini">Поменялась сумма (например, страховка) — поправь здесь: изменится с {MON[Number(ym.slice(5)) - 1]} и во всех следующих месяцах. Текущий месяц правится в «Деньгах».</span>
+      {(['avans', 'zp'] as PayKey[]).map((k) => {
+        const rows = (m.plan[k] || []).filter((r) => !r.once);
+        return (
+          <div key={k}>
+            <div className="bh" style={{ paddingTop: 8 }}><h4>С выплаты «{PAY[k].name}»</h4><span>{money(rows.reduce((a, r) => a + r.sum, 0))}</span></div>
+            {rows.map((r) => (
+              <button key={r.id} type="button" className="sprow" onClick={() => setEdit({ key: k, row: r })}>
+                <span className="ic">{abbr(r.cat)}</span><span>{r.name}<small>{r.cat}{r.reserve ? ' · из резерва' : ''}</small></span><span className="sm">{money(r.sum)}</span>
+              </button>
+            ))}
+            <button className="btn ghost" type="button" style={{ paddingInline: 0 }} onClick={() => setEdit({ key: k, row: null })}>+ платёж</button>
+          </div>
+        );
+      })}
+      {edit && <RowSheet key={edit.row?.id ?? 'new' + edit.key} p={{ ym, key: edit.key }} row={edit.row} note={`с ${MON[Number(ym.slice(5)) - 1]} и дальше`} onClose={() => setEdit(null)} />}
+    </div>
   );
 }

@@ -23,6 +23,8 @@ type Store = Tables & {
   /** keys — поля первичного ключа: тогда строка обновится на экране сразу, не дожидаясь сервера. */
   upsert: <T extends TableName>(t: T, row: Partial<Tables[T][number]>, keys?: string[]) => Promise<void>;
   saveSettings: (patch: Partial<Settings>) => Promise<void>;
+  /** Данные на этот момент — для нескольких записей подряд, когда store из замыкания уже устарел. */
+  snapshot: () => Tables;
   reload: () => Promise<void>;
 };
 
@@ -41,12 +43,17 @@ export function StoreProvider({ userId, children, onError }: { userId: string; c
   const [online, setOnline] = useState(navigator.onLine);
   const dataRef = useRef(data); dataRef.current = data;
 
+  // Номер последней загрузки каждой таблицы: ответ более старой загрузки, пришедший позже,
+  // не должен затирать свежие данные (иначе правка «не сохраняется с первого раза»).
+  const seq = useRef<Partial<Record<TableName, number>>>({});
   const fetchTable = useCallback(async (t: TableName) => {
+    const n = (seq.current[t] = (seq.current[t] || 0) + 1);
     const order = t === 'items' || t === 'expenses' || t === 'incomes' || t === 'wishes' ? 'created_at' : t === 'areas' || t === 'projects' || t === 'people' ? 'sort' : null;
     let q = supabase!.from(t).select('*');
     if (order) q = q.order(order, { ascending: true });
     const { data: rows, error } = await q;
     if (error) throw error;
+    if (seq.current[t] !== n) return;
     setData((d) => ({ ...d, [t]: rows ?? [] }));
   }, []);
 
@@ -86,22 +93,27 @@ export function StoreProvider({ userId, children, onError }: { userId: string; c
     insert: async (t, row) => {
       const { data: r, error } = await supabase!.from(t).insert(row as never).select().single();
       if (error) { fail(error); return null; }
-      setData((d) => ({ ...d, [t]: [...(d[t] as unknown[]), r] }));
+      fetchTable(t).catch(() => {});
+      setData((d) => ({ ...d, [t]: [...(d[t] as unknown[]).filter((x) => (x as { id?: string }).id !== (r as { id?: string }).id), r] }));
       return r;
     },
     update: async (t, match, patch) => {
       setData((d) => ({ ...d, [t]: (d[t] as Record<string, unknown>[]).map((x) => (Object.entries(match).every(([k, v]) => x[k] === v) ? { ...x, ...patch } : x)) }));
       let q = supabase!.from(t).update(patch as never);
       for (const [k, v] of Object.entries(match)) q = q.eq(k, v);
+      seq.current[t] = (seq.current[t] || 0) + 1; // загрузки, начатые до правки, устарели
       const { error } = await q;
-      if (error) { fail(error); fetchTable(t).catch(() => {}); }
+      if (error) fail(error);
+      fetchTable(t).catch(() => {});
     },
     remove: async (t, match) => {
       setData((d) => ({ ...d, [t]: (d[t] as Record<string, unknown>[]).filter((x) => !Object.entries(match).every(([k, v]) => x[k] === v)) }));
       let q = supabase!.from(t).delete();
       for (const [k, v] of Object.entries(match)) q = q.eq(k, v);
+      seq.current[t] = (seq.current[t] || 0) + 1;
       const { error } = await q;
-      if (error) { fail(error); fetchTable(t).catch(() => {}); }
+      if (error) fail(error);
+      fetchTable(t).catch(() => {});
     },
     upsert: async (t, row, keys) => {
       if (keys) {
@@ -112,6 +124,7 @@ export function StoreProvider({ userId, children, onError }: { userId: string; c
           return { ...d, [t]: list.some(same) ? list.map((x) => (same(x) ? { ...x, ...r } : x)) : [...list, r] };
         });
       }
+      seq.current[t] = (seq.current[t] || 0) + 1;
       const { error } = await supabase!.from(t).upsert(row as never);
       if (error) fail(error);
       fetchTable(t).catch(() => {});
@@ -122,6 +135,7 @@ export function StoreProvider({ userId, children, onError }: { userId: string; c
       const { error } = await supabase!.from('settings').upsert({ user_id: userId, data: next });
       if (error) fail(error);
     },
+    snapshot: () => dataRef.current,
   }), [data, settings, loaded, online, reload, fail, fetchTable, userId]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;

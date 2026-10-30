@@ -11,7 +11,7 @@ type Store = ReturnType<typeof useStore>;
 const clone = (m: MoneyMonth): MoneyMonth => JSON.parse(JSON.stringify(m));
 
 /** План месяца; если его ещё нет — создаётся из прошлого (без разовых платежей). */
-export function monthOrNew(store: Store, ym: string): MoneyMonth {
+export function monthOrNew(store: Pick<Store, 'money_months'>, ym: string): MoneyMonth {
   const m = store.money_months.find((x) => x.ym === ym);
   if (m) return m;
   const prev = [...store.money_months].filter((x) => x.ym < ym).sort((a, b) => b.ym.localeCompare(a.ym))[0];
@@ -19,7 +19,8 @@ export function monthOrNew(store: Store, ym: string): MoneyMonth {
 }
 
 export async function saveMonth(store: Store, ym: string, mut: (m: MoneyMonth) => void) {
-  const m = clone(monthOrNew(store, ym));
+  // Берём данные на сейчас, а не из замыкания: при нескольких записях подряд иначе вторая затрёт первую.
+  const m = clone(monthOrNew(store.snapshot(), ym));
   mut(m);
   await store.upsert('money_months', { ym, income: m.income, got: m.got, plan: m.plan }, ['ym']);
 }
@@ -44,9 +45,38 @@ export async function saveRow(store: Store, p: Period, row: PlanRow) {
   if (row.paid) await store.update('expenses', { plan_ref: planRef(p, row.id) }, { what: row.name, amount: row.paid_sum ?? row.sum, category: row.cat });
 }
 
-export async function deleteRow(store: Store, p: Period, row: PlanRow) {
+export async function deleteRow(store: Store, p: Period, row: PlanRow, forward = false) {
   await saveMonth(store, p.ym, (m) => { m.plan[p.key] = (m.plan[p.key] || []).filter((r) => r.id !== row.id); });
   if (row.paid) await store.remove('expenses', { plan_ref: planRef(p, row.id) });
+  if (forward) await eachLater(store, p.ym, row.id, (list) => list.filter((r) => r.id !== row.id || r.paid));
+}
+
+/** Постоянный платёж поменялся: та же правка во всех следующих месяцах, где он уже есть
+ *  (месяцы, которых ещё нет, создадутся из последнего — уже с новой суммой). */
+export async function saveRowForward(store: Store, p: Period, row: PlanRow) {
+  await saveRow(store, p, row);
+  await eachLater(store, p.ym, row.id, (list) => list.map((r) => (r.id === row.id ? { ...r, name: row.name, sum: row.sum, cat: row.cat, once: row.once } : r)));
+}
+
+async function eachLater(store: Store, ym: string, rowId: string, fn: (list: PlanRow[]) => PlanRow[]) {
+  const later = store.snapshot().money_months.filter((m) => m.ym > ym && (['avans', 'zp'] as PayKey[]).some((k) => (m.plan[k] || []).some((r) => r.id === rowId)));
+  for (const m of later) await saveMonth(store, m.ym, (x) => { for (const k of ['avans', 'zp'] as PayKey[]) if (x.plan[k]) x.plan[k] = fn(x.plan[k]!); });
+}
+
+/** Часть резерва — на жизнь: отложенное уменьшается (с последних поступлений), на сегодня появляется доход «на жизнь». */
+export async function reserveToLive(store: Store, amount: number) {
+  let left = amount;
+  const src = store.incomes.filter((i) => i.target === 'reserve').sort((a, b) => b.got_on.localeCompare(a.got_on) || b.created_at.localeCompare(a.created_at));
+  for (const i of src) {
+    if (left <= 0) break;
+    const take = Math.min(left, Number(i.amount));
+    left -= take;
+    if (take >= Number(i.amount)) await store.remove('incomes', { id: i.id });
+    else await store.update('incomes', { id: i.id }, { amount: Number(i.amount) - take });
+  }
+  const moved = amount - left;
+  if (moved > 0) await store.insert('incomes', { what: 'Из резерва на жизнь', amount: moved, source: src[0]?.source || 'Прочее', got_on: todayIso(), target: 'live' });
+  return moved;
 }
 
 /** Перенести платёж с аванса на зарплату того же месяца или обратно. */

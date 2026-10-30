@@ -8,6 +8,7 @@ import { absDate, addDays, iso, todayIso } from '../lib/dates';
 import { COLORS, type Color, type Person } from '../lib/types';
 import { Hero, Icon, Sheet, useToast } from '../components/ui';
 import { PayrollCard } from './PayrollCard';
+import { RecurringCard } from './Money';
 import { resetPin } from '../components/Lock';
 
 export function Settings() {
@@ -98,6 +99,7 @@ export function Settings() {
       </div>
 
       <PayrollCard />
+      <RecurringCard />
 
       <div className="card">
         <div className="card-t">Деньги</div>
