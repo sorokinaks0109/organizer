@@ -21,7 +21,8 @@ export function useGoogleEvents(enabled: boolean) {
       const t0 = new Date(todayIso() + 'T00:00:00');
       const res = await callFn<{ events: GEvent[] }>('gcal', { action: 'list', from: addDays(t0, -45).toISOString(), to: addDays(t0, 370).toISOString() });
       // Ежедневные напоминания чек-листа здоровья («💊 Витамины») в ленте не нужны — они есть в самом чек-листе.
-      const list = res.events.filter((e) => !(e.fromOrganizer && e.title.startsWith('💊'))).map((e) => ({ ...e, day: eventDay(e.start, e.allDay), time: eventTime(e.start, e.allDay), endTime: e.allDay ? '' : eventTime(e.end, false) }));
+      const seen = new Set<string>();
+      const list = res.events.filter((e) => !(e.fromOrganizer && e.title.startsWith('💊')) && !seen.has(e.id) && !!seen.add(e.id)).map((e) => ({ ...e, day: eventDay(e.start, e.allDay), time: eventTime(e.start, e.allDay), endTime: e.allDay ? '' : eventTime(e.end, false) }));
       // Событие на несколько дней показываем в каждом из них.
       const out: CalEvent[] = [];
       for (const e of list) {

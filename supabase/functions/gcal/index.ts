@@ -147,12 +147,16 @@ Deno.serve(handle(async (req) => {
     }
     case 'list': {
       const token = await accessToken(userId);
-      const fam = await familyCalendarId(userId);
-      const [own, family] = await Promise.all([
+      // Все календари, которые включены в самом Google Календаре (кроме праздников): основной, «Семья» и другие.
+      // «Семья» — выбранный в Настройках, а если не выбран — календарь с таким названием.
+      const cals = ((await gapi(token, '/users/me/calendarList?maxResults=100')).items || []) as { id: string; summary?: string; primary?: boolean; selected?: boolean; hidden?: boolean }[];
+      const fam = (await familyCalendarId(userId)) || cals.find((c) => /^семья$/i.test((c.summary || '').trim()))?.id || null;
+      const use = cals.filter((c) => !c.primary && !c.hidden && (c.selected || c.id === fam) && !c.id.includes('#holiday@'));
+      const [own, ...others] = await Promise.all([
         listRange(token, 'primary', body.from, body.to, body.q),
-        fam ? listRange(token, fam, body.from, body.to, body.q).catch(() => []) : Promise.resolve([]),
+        ...use.map((c) => listRange(token, c.id, body.from, body.to, body.q).catch(() => [] as GEvent[])),
       ]);
-      return json({ events: [...own.map((e) => normalize(e, 'primary', false)), ...family.map((e) => normalize(e, fam!, true))] });
+      return json({ events: [...own.map((e) => normalize(e, 'primary', false)), ...others.flatMap((list, i) => list.map((e) => normalize(e, use[i].id, use[i].id === fam)))] });
     }
     case 'create': {
       const token = await accessToken(userId);
