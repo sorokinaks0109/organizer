@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { useDictation } from '../lib/voice';
-import { parsedLabel, parseVoice, saveParsed } from '../lib/actions';
+import { imageForAi, parsedLabel, parseVoice, saveParsed } from '../lib/actions';
 import { fmtDate, money, parseIso, MON } from '../lib/dates';
 import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, PROJECT_STATUS, type Parsed, type ProjectStatus } from '../lib/types';
 import { Icon, Sheet, useToast } from '../components/ui';
@@ -20,6 +20,8 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   const [items, setItems] = useState<Parsed[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [image, setImage] = useState<{ data: string; mime: string; preview: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   // Текст держим и в ref: после остановки записи разбор должен получить всё распознанное, не дожидаясь перерисовки.
   const textRef = useRef(text);
   const setBoth = (t: string) => { textRef.current = t; setText(t); };
@@ -27,13 +29,23 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   // По умолчанию диктуем микрофоном клавиатуры: на телефоне он распознаёт русский лучше всего.
   const keyboard = (store.settings.voice ?? 'keyboard') === 'keyboard';
 
-  const close = () => { dict.stop(); setBoth(''); setItems(null); setErr(null); onClose(); };
+  const close = () => { dict.stop(); setBoth(''); setItems(null); setErr(null); setImage(null); onClose(); };
 
-  const parse = async (t = text) => {
-    if (!t.trim()) return;
+  const pick = async (f: File | undefined) => {
+    if (!f) return;
+    setErr(null); setItems(null);
+    try {
+      const img = await imageForAi(f);
+      setImage(img);
+      parse(textRef.current, img); // сразу разбираем; подпись можно дописать и разобрать заново
+    } catch (e) { setErr((e as Error).message); }
+  };
+
+  const parse = async (t = text, img = image) => {
+    if (!t.trim() && !img) return;
     setBusy(true); setErr(null);
     try {
-      const res = await parseVoice(t, store, preferArea, events || []);
+      const res = await parseVoice(t, store, preferArea, events || [], img);
       if (!res.length) { setErr('Не поняла, что записать. Скажи иначе или допиши руками.'); return; }
       if (store.settings.autoSave) { toast(await saveParsed(res, store)); close(); refreshAfter(res); return; }
       setItems(res);
@@ -76,9 +88,18 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
       )}
       <textarea className="field" rows={keyboard ? 4 : 3} autoFocus={keyboard && !items} value={text} onChange={(e) => setBoth(e.target.value)} placeholder={keyboard ? 'Здесь появится текст. Можно и напечатать.' : 'Или напиши здесь'} />
       {(dict.interim || dict.busy) && <div className="interim">{dict.busy ? 'Распознаю…' : dict.interim}</div>}
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+      {image && (
+        <div className="row" style={{ alignItems: 'center' }}>
+          <img src={image.preview} alt="Фото для разбора" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 10 }} />
+          <span className="mini" style={{ flex: 1 }}>{busy ? 'Смотрю, что на фото…' : 'Можно дописать подпись выше («это ВБ», «запись для Миланы») и нажать «Разобрать» ещё раз.'}</span>
+          <button className="x" type="button" aria-label="Убрать фото" onClick={() => setImage(null)}>×</button>
+        </div>
+      )}
       {!items && (
         <div className="row">
-          <button className="btn primary" type="button" disabled={busy || !text.trim()} onClick={() => parse()}>{busy ? 'Разбираю…' : 'Разобрать'}</button>
+          <button className="btn primary" type="button" disabled={busy || (!text.trim() && !image)} onClick={() => parse()}>{busy ? 'Разбираю…' : 'Разобрать'}</button>
+          <button className="btn" type="button" disabled={busy} onClick={() => fileRef.current?.click()}>📷 Фото или скрин</button>
           {text && <button className="btn ghost" type="button" onClick={() => setBoth('')}>Очистить</button>}
         </div>
       )}

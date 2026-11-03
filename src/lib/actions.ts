@@ -38,7 +38,23 @@ export function parsedLabel(p: Parsed): string {
 }
 const shortDay = (d: string) => { const x = parseIso(d); return `${x.getDate()} ${MON_SHORT[x.getMonth()]}`; };
 
-export async function parseVoice(text: string, store: Store, preferArea?: string | null, calendar: CalEvent[] = []): Promise<Parsed[]> {
+/** Фото с телефона — уменьшаем до 1600 px по длинной стороне, в JPEG: так быстро уходит и хорошо читается. */
+export async function imageForAi(file: File): Promise<{ data: string; mime: string; preview: string }> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error('Не удалось открыть картинку')); i.src = url; });
+    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const preview = c.toDataURL('image/jpeg', 0.85);
+    return { data: preview.slice(preview.indexOf(',') + 1), mime: 'image/jpeg', preview };
+  } finally { URL.revokeObjectURL(url); }
+}
+
+export async function parseVoice(text: string, store: Store, preferArea?: string | null, calendar: CalEvent[] = [], image?: { data: string; mime: string } | null): Promise<Parsed[]> {
   const { areas, projects, people, settings } = store;
   const d = new Date();
   const ordered = preferArea ? [...areas].sort((a, b) => (a.id === preferArea ? -1 : b.id === preferArea ? 1 : 0)) : areas;
@@ -59,6 +75,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
     payments: payments.map((r) => ({ id: r.id, name: r.name, sum: r.sum })),
     events: evs.map((e) => ({ id: e.id, title: e.title, date: e.day, time: e.time })),
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, date: t.due_date })),
+    image: image ? { data: image.data, mime: image.mime } : null,
   });
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
   const okD = (v: unknown) => normDate(v);

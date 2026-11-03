@@ -1,4 +1,4 @@
-// Разбор надиктованного текста: «поставь мне и Мите в календарь…», «купить витамины к среде», «такси 450».
+// Разбор надиктованного текста или картинки (чек, скриншот записи): «поставь мне и Мите в календарь…», «такси 450».
 // Нейросеть раскладывает фразу на записи и сама выбирает сферу и проект. Провайдер — YandexGPT или Claude.
 import Anthropic from 'npm:@anthropic-ai/sdk@1';
 import { handle, json, requireUser, HttpError } from '../_shared/common.ts';
@@ -15,6 +15,8 @@ type Ctx = {
   payments?: { id: string; name: string; sum: number }[];
   events?: { id: string; title: string; date: string; time: string }[];
   tasks?: { id: string; title: string; date: string | null }[];
+  /** Фото чека или скриншот записи: base64 без префикса data:. */
+  image?: { data: string; mime: string } | null;
 };
 
 function systemPrompt(c: Ctx): string {
@@ -56,6 +58,12 @@ ${events}
 
 Открытые дела (id: название — срок):
 ${tasks}
+
+Если пришло фото или скриншот:
+- Чек — одна запись expense на ИТОГОВУЮ сумму чека (не по строчкам), what — магазин или что куплено коротко, категория по содержимому, date — дата с чека, если она не в будущем.
+- Скриншот записи (к врачу, на маникюр, на занятие, билет, бронь) — event с датой, временем и местом; адрес и важное (номер записи, что взять) — в title коротко, не выдумывай.
+- Скриншот перевода или поступления денег — income или expense по смыслу.
+- Если на картинке несколько разных вещей — несколько записей. Подпись пользователя к фото важнее: если он что-то уточнил, делай как сказано.
 
 Если речь о том, что уже есть в списках, — меняй его (event_update, event_delete, task_update), а не создавай новое. Если подходящего нет — создавай новое.
 
@@ -115,17 +123,40 @@ async function askYandex(system: string, text: string): Promise<string> {
   return data?.result?.alternatives?.[0]?.message?.text ?? '';
 }
 
-async function askClaude(system: string, text: string): Promise<string> {
+type Img = { data: string; mime: string };
+const IMG_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+
+async function askClaude(system: string, text: string, image?: Img | null): Promise<string> {
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
+  const mime = (IMG_TYPES as readonly string[]).includes(image?.mime || '') ? image!.mime as typeof IMG_TYPES[number] : 'image/jpeg';
   const response = await client.messages.create({
     model: Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5-5',
     max_tokens: 16000,
     output_config: { effort: 'low' },
     system,
-    messages: [{ role: 'user', content: text }],
+    messages: [{
+      role: 'user',
+      content: image
+        ? [{ type: 'image', source: { type: 'base64', media_type: mime, data: image.data } }, { type: 'text', text }]
+        : text,
+    }],
   });
   if (response.stop_reason === 'refusal') throw new HttpError(422, 'Нейросеть отказалась разбирать этот текст');
   return response.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+}
+
+/** Текст с картинки через Yandex Vision OCR — когда нейросеть Яндекса, которая картинки не читает. */
+async function yandexOcr(image: Img): Promise<string> {
+  const key = Deno.env.get('YANDEX_API_KEY'), folder = Deno.env.get('YANDEX_FOLDER_ID');
+  if (!key || !folder) throw new HttpError(500, 'Не заданы YANDEX_API_KEY и YANDEX_FOLDER_ID');
+  const res = await fetch('https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText', {
+    method: 'POST',
+    headers: { Authorization: `Api-Key ${key}`, 'x-folder-id': folder, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mimeType: image.mime === 'image/png' ? 'PNG' : 'JPEG', languageCodes: ['ru', 'en'], model: 'page', content: image.data }),
+  });
+  if (!res.ok) throw new HttpError(502, `Распознавание текста на фото не удалось (${res.status}). Нужна роль ai.vision.user у сервисного аккаунта Яндекса или ключ ANTHROPIC_API_KEY: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return data?.result?.textAnnotation?.fullText ?? '';
 }
 
 /** Достаём JSON из ответа, даже если модель обернула его в ``` или добавила слова. */
@@ -139,14 +170,25 @@ export function extractJson(raw: string): unknown {
 Deno.serve(handle(async (req) => {
   await requireUser(req);
   const ctx = (await req.json()) as Ctx;
-  if (!ctx?.text?.trim()) throw new HttpError(400, 'Пустой текст');
-  const provider = (Deno.env.get('AI_PROVIDER') || (Deno.env.get('YANDEX_API_KEY') ? 'yandex' : 'claude')).toLowerCase();
+  const image = ctx?.image?.data ? ctx.image : null;
+  if (!ctx?.text?.trim() && !image) throw new HttpError(400, 'Пустой текст');
+  let provider = (Deno.env.get('AI_PROVIDER') || (Deno.env.get('YANDEX_API_KEY') ? 'yandex' : 'claude')).toLowerCase();
   const system = systemPrompt(ctx);
-  const raw = provider === 'claude' ? await askClaude(system, ctx.text) : await askYandex(system, ctx.text);
+  // Картинку Claude читает сам; если ключа Claude нет — сначала достаём текст с картинки и разбираем его.
+  if (image && Deno.env.get('ANTHROPIC_API_KEY')) provider = 'claude';
+  if (image && provider !== 'claude') {
+    const seen = (await yandexOcr(image)).trim();
+    if (!seen) throw new HttpError(422, 'На картинке не нашлось текста');
+    ctx.text = `${ctx.text?.trim() ? ctx.text.trim() + '\n\n' : ''}Текст, распознанный на фото или скриншоте:\n${seen.slice(0, 6000)}`;
+  } else if (image) {
+    ctx.text = ctx.text?.trim() ? `Подпись к картинке: ${ctx.text.trim()}` : 'Разбери, что на картинке.';
+  }
+  const ask = (s: string, txt: string) => (provider === 'claude' ? askClaude(s, txt, image) : askYandex(s, txt));
+  const raw = await ask(system, ctx.text);
   let parsed = extractJson(raw) as { items?: unknown[] };
   // Пустой ответ — переспрашиваем один раз: модель иногда «теряется» на длинных списках.
   if (!Array.isArray(parsed.items) || !parsed.items.length) {
-    const again = provider === 'claude' ? await askClaude(system, ctx.text) : await askYandex(system, `${ctx.text}\n\n(Разбери этот текст на записи. Ответь JSON, в items должна быть хотя бы одна запись.)`);
+    const again = provider === 'claude' ? await askClaude(system, ctx.text, image) : await askYandex(system, `${ctx.text}\n\n(Разбери этот текст на записи. Ответь JSON, в items должна быть хотя бы одна запись.)`);
     try { parsed = extractJson(again) as { items?: unknown[] }; } catch { /* оставляем первый ответ */ }
   }
   const items = Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed as unknown[] : [];
