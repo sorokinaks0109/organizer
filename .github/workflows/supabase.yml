@@ -32,5 +32,5 @@ jobs:
             exit 0
           fi
           for f in assistant speech gcal; do
-            supabase functions deploy "$f" --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt --use-api
+            supabase functions deploy "$f" --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt --use-api --yes
           done
