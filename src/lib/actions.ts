@@ -62,20 +62,27 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const health = settings.health ?? DEFAULT_HEALTH;
   const payments = openPayments(store);
   // Чтобы голосом можно было исправить уже существующее: ближайшие события и открытые дела.
-  const from = iso(addDays(new Date(), -7)), to = iso(addDays(new Date(), 120));
-  const evs = [...new Map(calendar.filter((e) => e.day >= from && e.day <= to).map((e) => [e.id, e])).values()].slice(0, 150);
-  const openTasks = store.items.filter((t) => t.kind === 'task' && !t.done).slice(-120);
+  // Нейросеть платная и считает объём текста, поэтому списки короткие: события на месяц вперёд, не больше 40,
+  // и 40 дел — сначала с ближайшим сроком, потом недавние без срока.
+  const from = iso(addDays(new Date(), -3)), to = iso(addDays(new Date(), 31));
+  const evs = [...new Map(calendar.filter((e) => e.day >= from && e.day <= to).map((e) => [e.id, e])).values()]
+    .sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time)).slice(0, 40);
+  const open = store.items.filter((t) => t.kind === 'task' && !t.done);
+  const openTasks = [...open.filter((t) => t.due_date).sort((a, b) => a.due_date!.localeCompare(b.due_date!)).slice(0, 25), ...open.filter((t) => !t.due_date).slice(-15)];
+  // Вместо длинных id (36–50 знаков) — короткие метки «a1», «e3»: нейросеть считает объём текста, а id в нём — большая часть.
+  const short = new Map<string, string>(), long = new Map<string, string>();
+  const al = (prefix: string, id: string) => { const k = `${prefix}:${id}`; let s = short.get(k); if (!s) { s = prefix + (short.size + 1); short.set(k, s); long.set(s, id); } return s; };
   const res = await callFn<{ items: Parsed[]; raw?: string }>('assistant', {
     text: preferArea ? `${text}\n\n(Записано внутри сферы «${areas.find((a) => a.id === preferArea)?.name}» — если не сказано иное, клади туда.)` : text,
     today: todayIso(), weekday: WD_FULL[d.getDay()],
-    areas: ordered.map((a) => ({ id: a.id, name: a.name, keywords: a.keywords, projects: projects.filter((p) => p.area_id === a.id && !p.done).map((p) => ({ id: p.id, name: p.name, status: PROJECT_STATUS[p.status ?? 'active'].name })) })),
-    people: people.map((p) => ({ id: p.id, name: p.name })),
+    areas: ordered.map((a) => ({ id: al('a', a.id), name: a.name, keywords: (a.keywords || []).slice(0, 8), projects: projects.filter((p) => p.area_id === a.id && !p.done).map((p) => ({ id: al('p', p.id), name: p.name, status: PROJECT_STATUS[p.status ?? 'active'].name })) })),
+    people: people.map((p) => ({ id: al('u', p.id), name: p.name })),
     spendCats: settings.spendCats?.length ? settings.spendCats : DEFAULT_SPEND_CATS,
     incomeSources: INCOME_SOURCES,
-    health: health.map((h) => ({ id: h.id, name: h.name, kind: h.kind })),
-    payments: payments.map((r) => ({ id: r.id, name: r.name, sum: r.sum })),
-    events: evs.map((e) => ({ id: e.id, title: e.title, date: e.day, time: e.time })),
-    tasks: openTasks.map((t) => ({ id: t.id, title: t.title, date: t.due_date })),
+    health: health.map((h) => ({ id: al('h', h.id), name: h.name, kind: h.kind })),
+    payments: payments.map((r) => ({ id: al('r', r.id), name: r.name, sum: r.sum })),
+    events: evs.map((e) => ({ id: al('e', e.id), title: e.title, date: e.day, time: e.time })),
+    tasks: openTasks.map((t) => ({ id: al('t', t.id), title: t.title, date: t.due_date })),
     image: image ? { data: image.data, mime: image.mime } : null,
   });
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
@@ -88,8 +95,11 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const proj = (v: unknown) => (typeof v === 'string' && pids.has(v) ? v : null);
   const ppl = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && peopleIds.has(x)) : []);
   const out: Parsed[] = [];
+  const un = (v: unknown) => (typeof v === 'string' && long.has(v) ? long.get(v)! : v);
   for (const raw of res.items as Record<string, unknown>[]) {
     if (!raw || typeof raw !== 'object') continue;
+    for (const k of ['area_id', 'project_id', 'row_id', 'event_id', 'item_id']) if (k in raw) raw[k] = un(raw[k]);
+    if (Array.isArray(raw.people)) raw.people = raw.people.map(un);
     // Нейросеть иногда пишет название в другом поле или придумывает свой тип — приводим к нашему.
     if (!raw.title && (raw.name || raw.text)) raw.title = raw.name || raw.text;
     if (raw.type === 'birthday') { raw.type = 'event'; raw.repeat ??= 'YEARLY'; }
