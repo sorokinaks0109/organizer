@@ -185,10 +185,10 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
   const peopleChips = (p.type === 'task' || p.type === 'event') && people.length > 0 && (
     <div className="pv-row">
       <span className="mini">Для:</span>
-      <span className="chip" aria-pressed="true" style={{ padding: '5px 10px', fontSize: 13 }}>Я</span>
+      <span className="chip sm" aria-pressed="true">Я</span>
       {people.map((x) => {
         const on = (p.people || []).includes(x.id);
-        return <button key={x.id} type="button" className="chip" aria-pressed={on} style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => onChange({ people: on ? (p.people || []).filter((y) => y !== x.id) : [...(p.people || []), x.id] } as Partial<Parsed>)}>{x.name}</button>;
+        return <button key={x.id} type="button" className="chip sm" aria-pressed={on} onClick={() => onChange({ people: on ? (p.people || []).filter((y) => y !== x.id) : [...(p.people || []), x.id] } as Partial<Parsed>)}>{x.name}</button>;
       })}
     </div>
   );

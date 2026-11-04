@@ -18,7 +18,7 @@ async function tokenRequest(params: Record<string, string>) {
   const res = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params) });
   const data = await res.json();
   if (!res.ok) throw new HttpError(res.status === 400 ? 409 : 502, data.error === 'invalid_grant' ? 'Доступ к Google Календарю отозван или устарел. Подключите календарь заново в настройках.' : `Google: ${data.error_description || data.error}`);
-  return data as { access_token: string; refresh_token?: string; expires_in: number; id_token?: string };
+  return data as { access_token: string; refresh_token?: string; expires_in: number; id_token?: string; scope?: string };
 }
 
 /** Действующий токен доступа: берём сохранённый или обновляем по refresh_token. */
@@ -37,6 +37,9 @@ async function gapi(token: string, path: string, init: RequestInit = {}) {
   const res = await fetch(`${API}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers || {}) } });
   if (res.status === 204) return null;
   const data = await res.json();
+  if (res.status === 403 && /insufficient authentication scopes/i.test(data?.error?.message || '')) {
+    throw new HttpError(409, 'Нет доступа к календарю: при подключении не поставлена галочка про Google Календарь. Настройки → Google Календарь → «Отключить», потом «Подключить» и поставить эту галочку.');
+  }
   if (!res.ok) throw new HttpError(res.status === 401 ? 409 : 502, `Google Календарь: ${data?.error?.message || res.status}`);
   return data;
 }
@@ -94,6 +97,10 @@ async function oauthCallback(url: URL): Promise<Response> {
   const { id, secret } = clientCreds();
   const t = await tokenRequest({ code, client_id: id, client_secret: secret, redirect_uri: redirectUri(), grant_type: 'authorization_code' });
   await db.from('oauth_states').delete().eq('state', state);
+  // На экране Google у доступа к календарю есть своя галочка: если её не поставить, вход пройдёт, а календарь работать не будет.
+  if (typeof t.scope === 'string' && !t.scope.includes('auth/calendar')) {
+    throw new Error('Не дан доступ к календарю. Нажми «Подключить» ещё раз и на экране Google поставь галочку у пункта про Google Календарь (просмотр и изменение событий).');
+  }
   let email: string | null = null;
   if (t.id_token) { try { email = JSON.parse(atob(t.id_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).email ?? null; } catch { /* имя почты не обязательно */ } }
   const row: Record<string, unknown> = { user_id: st.user_id, access_token: t.access_token, expires_at: new Date(Date.now() + t.expires_in * 1000).toISOString(), email, updated_at: new Date().toISOString() };
