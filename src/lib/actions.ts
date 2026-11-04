@@ -8,6 +8,7 @@ import type { CalEvent } from './gcal';
 import type { useStore } from './store';
 
 type Store = ReturnType<typeof useStore>;
+const REMINDS = ['now', '15m', '30m', 'hour', '2h', 'day', '2d', 'week', 'none'];
 const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
 
 /** Неоплаченные платежи текущего периода — чтобы «оплатила ТСЖ» отметило нужную строку. */
@@ -95,8 +96,8 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
     if (raw.type === 'event' && !raw.date && raw.start && okD(raw.start)) { raw.date = raw.start; raw.start = null; }
     const t = raw.type;
     if ((t === 'task' || t === 'note' || t === 'wish') && !raw.title) continue;
-    if (t === 'task') out.push({ type: 'task', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date), time: okT(raw.time), calendar: !!raw.calendar, people: ppl(raw.people), remind: (raw.remind as string) ?? null });
-    else if (t === 'event' && raw.title && okD(raw.date)) out.push({ type: 'event', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date)!, start: okT(raw.start), end: okT(raw.end), repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(raw.repeat as string) ? (raw.repeat as string) : null, remind: ['hour', 'day', 'week', 'none'].includes(raw.remind as string) ? (raw.remind as string) : null, people: ppl(raw.people) });
+    if (t === 'task') out.push({ type: 'task', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date), time: okT(raw.time), calendar: !!raw.calendar, people: ppl(raw.people), remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null });
+    else if (t === 'event' && raw.title && okD(raw.date)) out.push({ type: 'event', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date)!, start: okT(raw.start), end: okT(raw.end), repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(raw.repeat as string) ? (raw.repeat as string) : null, remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null, people: ppl(raw.people) });
     else if (t === 'note') out.push({ type: 'note', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id) });
     else if (t === 'expense' && Number(raw.amount) > 0) out.push({ type: 'expense', what: String(raw.what || 'Без названия'), amount: Math.round(Number(raw.amount)), category: String(raw.category || 'Прочее'), wb: !!raw.wb, date: pastD(raw.date) });
     else if (t === 'income' && Number(raw.amount) > 0) {
@@ -113,8 +114,8 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
       const was = `${e.title} · ${shortDay(e.day)}${e.time ? ', ' + e.time : ''}`;
       if (t === 'event_delete') out.push({ type: 'event_delete', event_id: e.id, calendarId: e.calendarId, was });
       else {
-        const u = { title: raw.title && raw.title !== e.title ? String(raw.title) : null, date: okD(raw.date) !== e.day ? okD(raw.date) : null, start: okT(raw.start) !== e.time ? okT(raw.start) : null, end: okT(raw.end) };
-        if (u.title || u.date || u.start || u.end) out.push({ type: 'event_update', event_id: e.id, calendarId: e.calendarId, was, ...u });
+        const u = { title: raw.title && raw.title !== e.title ? String(raw.title) : null, date: okD(raw.date) !== e.day ? okD(raw.date) : null, start: okT(raw.start) !== e.time ? okT(raw.start) : null, end: okT(raw.end), remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null };
+        if (u.title || u.date || u.start || u.end || u.remind) out.push({ type: 'event_update', event_id: e.id, calendarId: e.calendarId, was, ...u });
       }
     } else if (t === 'project' && raw.title) {
       out.push({ type: 'project', title: String(raw.title), area_id: area(raw.area_id), status: okS(raw.status) ?? 'active', note: raw.note ? String(raw.note) : null });
@@ -178,7 +179,7 @@ export async function saveParsed(list: Parsed[], store: Store): Promise<string> 
         const row = (monthOrNew(store, per.ym).plan[per.key] || []).find((r) => r.id === p.row_id);
         if (row && !row.paid) { await payRow(store, per, row, p.amount); saved++; }
       } else if (p.type === 'event_update') {
-        await callFn('gcal', { action: 'update', id: p.event_id, calendarId: p.calendarId, timeZone: TZ, changes: { title: p.title, date: p.date, start: p.start, end: p.end } }); saved++;
+        await callFn('gcal', { action: 'update', id: p.event_id, calendarId: p.calendarId, timeZone: TZ, changes: { title: p.title, date: p.date, start: p.start, end: p.end, remind: p.remind ?? null } }); saved++;
       } else if (p.type === 'event_delete') {
         await callFn('gcal', { action: 'delete', id: p.event_id, calendarId: p.calendarId });
         await store.remove('event_links', { event_id: p.event_id }); saved++;

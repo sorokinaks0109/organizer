@@ -10,7 +10,19 @@ import { Icon, Sheet, useToast } from '../components/ui';
 
 const TYPE_NAME: Record<Parsed['type'], string> = { task: 'Дело', event: 'Событие в календарь', note: 'Заметка', expense: 'Трата', income: 'Доход', wish: 'Желание', paid: 'Платёж оплачен', health: 'Здоровье', event_update: 'Изменить событие', event_delete: 'Удалить событие', task_update: 'Изменить дело', project: 'Новый проект', project_update: 'Статус проекта' };
 const REPEAT: Record<string, string> = { DAILY: 'каждый день', WEEKLY: 'каждую неделю', MONTHLY: 'каждый месяц', YEARLY: 'каждый год' };
-const REMIND: Record<string, string> = { hour: 'за час', day: 'за день', week: 'за неделю', none: 'без напоминания' };
+const REMIND: Record<string, string> = { now: 'в момент начала', '15m': 'за 15 минут', '30m': 'за 30 минут', hour: 'за час', '2h': 'за 2 часа', day: 'за день', week: 'за неделю', none: 'без напоминания' };
+// У события на весь день напоминание бывает только заранее: накануне в 9:00, за 2 дня, за неделю.
+const REMIND_ALLDAY: Record<string, string> = { day: 'накануне в 9:00', '2d': 'за 2 дня в 9:00', week: 'за неделю', none: 'без напоминания' };
+
+function RemindSel({ value, allDay, onChange }: { value: string | null; allDay: boolean; onChange: (v: string | null) => void }) {
+  const opts = allDay ? REMIND_ALLDAY : REMIND;
+  return (
+    <select aria-label="Напоминание" value={value && value in opts ? value : ''} onChange={(e) => onChange(e.target.value || null)}>
+      <option value="">🔔 как обычно в календаре</option>
+      {Object.entries(opts).map(([k, l]) => <option key={k} value={k}>🔔 {l}</option>)}
+    </select>
+  );
+}
 
 export function Capture({ open, onClose, preferArea }: { open: boolean; onClose: () => void; preferArea?: string | null }) {
   const store = useStore();
@@ -163,6 +175,7 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
               <input type="time" aria-label="Новое время" value={(isTask ? p.time : p.start) ?? ''} onChange={(e) => onChange((isTask ? { time: e.target.value || null } : { start: e.target.value || null }) as Partial<Parsed>)} />
               {p.type === 'task_update' && p.done && <span className="mini">· отмечу сделанным</span>}
             </div>
+            {p.type === 'event_update' && <div className="pv-row"><RemindSel value={p.remind ?? null} allDay={false} onChange={(v) => onChange({ remind: v } as Partial<Parsed>)} /></div>}
             <span className="mini">Пустые поля не меняются.</span>
           </>
         )}
@@ -217,13 +230,15 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
           <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={!!p.calendar} disabled={!p.date} onChange={(e) => onChange({ calendar: e.target.checked })} /> в календарь</label>
         </div>
       )}
+      {p.type === 'task' && p.calendar && p.date && <div className="pv-row"><RemindSel value={p.remind ?? null} allDay={!p.time} onChange={(v) => onChange({ remind: v })} /></div>}
       {p.type === 'event' && (
         <div className="pv-row">
           <input type="date" aria-label="Дата" value={p.date} onChange={(e) => onChange({ date: e.target.value })} />
           <input type="time" aria-label="Начало" value={p.start ?? ''} onChange={(e) => onChange({ start: e.target.value || null })} />
-          <span className="mini">{[p.start ? null : 'весь день', p.repeat ? REPEAT[p.repeat] : null, p.remind ? `напомнить ${REMIND[p.remind]}` : null].filter(Boolean).join(' · ')}</span>
+          <span className="mini">{[p.start ? null : 'весь день', p.repeat ? REPEAT[p.repeat] : null].filter(Boolean).join(' · ')}</span>
         </div>
       )}
+      {p.type === 'event' && <div className="pv-row"><RemindSel value={p.remind} allDay={!p.start} onChange={(v) => onChange({ remind: v })} /></div>}
       {peopleChips}
       {p.type === 'expense' && (
         <div className="pv-row">

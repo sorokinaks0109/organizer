@@ -75,6 +75,16 @@ async function listRange(token: string, calendarId: string, from: string, to: st
 }
 
 
+/** Напоминание: «за 15 минут», «за час», «накануне»… У события на весь день — только заранее, в 9:00. */
+function remindersFor(remind: string | null | undefined, allDay: boolean) {
+  if (!remind) return undefined;
+  if (remind === 'none') return { useDefault: false, overrides: [] };
+  const minutes = allDay
+    ? ({ hour: 900, day: 900, '2d': 1440 + 900, week: 6 * 1440 + 900 } as Record<string, number>)[remind] ?? 900
+    : ({ now: 0, '15m': 15, '30m': 30, hour: 60, '2h': 120, day: 1440, week: 10080 } as Record<string, number>)[remind] ?? 60;
+  return { useDefault: false, overrides: [{ method: 'popup', minutes }] };
+}
+
 /** Дата и время без часовых поясов: «2026-12-29», «19:00» ± минуты. */
 function shiftLocal(date: string, time: string, minutes: number): { date: string; time: string } {
   const [y, m, d] = date.split('-').map(Number), [h, mi] = time.split(':').map(Number);
@@ -180,9 +190,7 @@ Deno.serve(handle(async (req) => {
         start = { date: e.date }; end = { date: next.toISOString().slice(0, 10) };
       }
       const allDay = !e.start;
-      const reminders = e.remind === 'none' ? { useDefault: false, overrides: [] }
-        : e.remind ? { useDefault: false, overrides: [{ method: 'popup', minutes: allDay ? { hour: 900, day: 900, week: 6 * 1440 + 900 }[e.remind] ?? 900 : { now: 0, hour: 60, day: 1440, week: 10080 }[e.remind] ?? 60 }] }
-        : undefined;
+      const reminders = remindersFor(e.remind, allDay);
       const fam = e.attendees?.length ? await familyCalendarId(userId) : null;
       const calendarId = fam || 'primary';
       const payload: Record<string, unknown> = {
@@ -196,12 +204,12 @@ Deno.serve(handle(async (req) => {
       return json({ id: created.id, link: created.htmlLink, calendarId });
     }
     case 'update': {
-      // Изменить существующее событие: название, день, время. Остальное (напоминания, участники) не трогаем.
+      // Изменить существующее событие: название, день, время, напоминание. Участников не трогаем.
       const token = await accessToken(userId);
       const cal = body.calendarId || 'primary';
       const path = `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(body.id)}`;
       const cur = await gapi(token, path) as GEvent & { start: { date?: string; dateTime?: string; timeZone?: string }; end: { date?: string; dateTime?: string } };
-      const ch = (body.changes || {}) as { title?: string | null; date?: string | null; start?: string | null; end?: string | null };
+      const ch = (body.changes || {}) as { title?: string | null; date?: string | null; start?: string | null; end?: string | null; remind?: string | null };
       const tz = body.timeZone || cur.start?.timeZone || 'Europe/Moscow';
       const patch: Record<string, unknown> = {};
       if (ch.title) patch.summary = ch.title;
@@ -220,6 +228,7 @@ Deno.serve(handle(async (req) => {
           patch.end = { dateTime: `${e.date}T${e.time}:00`, timeZone: tz };
         }
       }
+      if (ch.remind) patch.reminders = remindersFor(ch.remind, !(ch.start || cur.start?.dateTime));
       if (!Object.keys(patch).length) return json({ ok: true });
       await gapi(token, `${path}?sendUpdates=${cur.attendees?.length ? 'all' : 'none'}`, { method: 'PATCH', body: JSON.stringify(patch) });
       return json({ ok: true });

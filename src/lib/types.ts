@@ -60,7 +60,7 @@ export type Parsed =
   | { type: 'paid'; row_id: string; name: string; amount: number }
   | { type: 'project'; title: string; area_id: string | null; status: ProjectStatus; note: string | null }
   | { type: 'project_update'; project_id: string; was: string; status: ProjectStatus | null; note: string | null }
-  | { type: 'event_update'; event_id: string; calendarId: string; was: string; title: string | null; date: string | null; start: string | null; end: string | null }
+  | { type: 'event_update'; event_id: string; calendarId: string; was: string; title: string | null; date: string | null; start: string | null; end: string | null; remind?: string | null }
   | { type: 'event_delete'; event_id: string; calendarId: string; was: string }
   | { type: 'task_update'; item_id: string; was: string; title: string | null; date: string | null; time: string | null; done: boolean | null }
   | { type: 'wish'; title: string; area_id: string | null; target_sum: number | null };

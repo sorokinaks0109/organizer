@@ -45,7 +45,7 @@ ${people}
 - paid — пользователь оплатил платёж из своего плана («оплатила ТСЖ», «заплатила за интернет 1050»). row_id — из списка ниже; amount — если названа сумма, иначе null. Если такого платежа в списке нет, это expense.
 - project — новый проект в сфере («добавь проекты: приложение по русскому, мультик на заказ» — каждый отдельной записью). status: "idea" | "active" | "wait" | "done", по умолчанию "active".
 - project_update — статус или заметка существующего проекта из списка («по приложению по русскому: доделываю слова», «мультик на паузе, жду ответ заказчика», «блог готов»). status: "idea" | "active" | "wait" | "done" или null, note — коротко где сейчас, или null.
-- event_update — исправить, переименовать или перенести СУЩЕСТВУЮЩЕЕ событие календаря («исправь», «перенеси», «поменяй время», «переименуй»). event_id — из списка событий ниже. В title, date, start, end указывай только то, что меняется, остальное null.
+- event_update — исправить, переименовать, перенести СУЩЕСТВУЮЩЕЕ событие календаря или поставить ему напоминание («исправь», «перенеси», «поменяй время», «переименуй», «напомни за час про стоматолога»). event_id — из списка событий ниже. В title, date, start, end, remind указывай только то, что меняется, остальное null.
 - event_delete — удалить существующее событие («удали», «убери из календаря», «встречу отменили»). event_id — из списка.
 - task_update — изменить существующее дело: перенести (date, time), переименовать (title) или отметить сделанным («сделала…», «готово…» → done: true). item_id — из списка дел.
 - health — отметка ежедневного чек-листа здоровья («выпила витамины», «выпила два стакана воды»). value — сколько (для галочки 1).
@@ -79,7 +79,7 @@ ${health}
 - День рождения — event на весь день (start null), repeat YEARLY, название «🎂 День рождения: Имя». Если перечислено несколько дней рождения — отдельная запись на каждого. Дата — ближайшая будущая, полностью YYYY-MM-DD.
 - «Мне и Мите» → people: [id Мити]. «Всей семье» → все люди.
 - Отпускные по умолчанию target "reserve" (их откладывают на будущие платежи). Если сказано «отложить на …» про желание — target "wish". Иначе target "live".
-- remind: "hour" | "day" | "week" | null. repeat: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY" | null.
+- remind: "now" | "15m" | "30m" | "hour" | "2h" | "day" | "week" | null («напомни за 15 минут» → "15m», «за два часа» → "2h", «напомни накануне» → "day"). Если про напоминание не сказано — null (сработает обычное напоминание календаря). repeat: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY" | null.
 
 Пример. Текст: «поставь с ежегодным повторением дни рождения мама 2 июля сестра Анюта 2 августа».
 Ответ: {"items":[{"type":"event","title":"🎂 День рождения: мама","area_id":"<id Дней рождения или Семьи>","project_id":null,"date":"<ближайшее 2 июля>","start":null,"end":null,"repeat":"YEARLY","remind":"day","people":[]},{"type":"event","title":"🎂 День рождения: сестра Анюта","area_id":"<тот же id>","project_id":null,"date":"<ближайшее 2 августа>","start":null,"end":null,"repeat":"YEARLY","remind":"day","people":[]}]}
@@ -97,7 +97,7 @@ ${health}
  {"type":"paid","row_id":"id","amount":число|null},
  {"type":"project","title":"...","area_id":"id"|null,"status":"active","note":null},
  {"type":"project_update","project_id":"id","status":"wait"|null,"note":"..."|null},
- {"type":"event_update","event_id":"id","title":"..."|null,"date":"YYYY-MM-DD"|null,"start":"HH:MM"|null,"end":"HH:MM"|null},
+ {"type":"event_update","event_id":"id","title":"..."|null,"date":"YYYY-MM-DD"|null,"start":"HH:MM"|null,"end":"HH:MM"|null,"remind":null},
  {"type":"event_delete","event_id":"id"},
  {"type":"task_update","item_id":"id","title":"..."|null,"date":"YYYY-MM-DD"|null,"time":"HH:MM"|null,"done":true|null},
  {"type":"health","item_id":"id","value":1},
