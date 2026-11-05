@@ -1,5 +1,6 @@
 // Разбор надиктованного текста или картинки (чек, скриншот записи): «поставь мне и Мите в календарь…», «такси 450».
-// Нейросеть раскладывает фразу на записи и сама выбирает сферу и проект. Провайдер — YandexGPT или Claude.
+// Нейросеть раскладывает фразу на записи и сама выбирает сферу и проект.
+// Провайдер — Groq (бесплатно, при отказе — YandexGPT Lite), YandexGPT или Claude; выбор — секрет AI_PROVIDER или какой ключ задан.
 import Anthropic from 'npm:@anthropic-ai/sdk@1';
 import { handle, json, requireUser, HttpError } from '../_shared/common.ts';
 
@@ -105,10 +106,12 @@ ${health}
 ]}`;
 }
 
-async function askYandex(system: string, text: string): Promise<string> {
+type Usage = { input: number; output: number };
+type AskResult = { text: string; usage: Usage; model: string };
+
+async function askYandex(system: string, text: string, model = Deno.env.get('YANDEX_MODEL') || 'yandexgpt/latest'): Promise<AskResult> {
   const key = Deno.env.get('YANDEX_API_KEY'), folder = Deno.env.get('YANDEX_FOLDER_ID');
   if (!key || !folder) throw new HttpError(500, 'Не заданы YANDEX_API_KEY и YANDEX_FOLDER_ID');
-  const model = Deno.env.get('YANDEX_MODEL') || 'yandexgpt/latest';
   const res = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/completion', {
     method: 'POST',
     headers: { Authorization: `Api-Key ${key}`, 'x-folder-id': folder, 'Content-Type': 'application/json' },
@@ -120,17 +123,35 @@ async function askYandex(system: string, text: string): Promise<string> {
   });
   if (!res.ok) throw new HttpError(502, `YandexGPT ответил ошибкой ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
-  return data?.result?.alternatives?.[0]?.message?.text ?? '';
+  const u = data?.result?.usage ?? {};
+  return { text: data?.result?.alternatives?.[0]?.message?.text ?? '', usage: { input: Number(u.inputTextTokens || 0), output: Number(u.completionTokens || 0) }, model };
 }
+
+/** Groq, бесплатный тариф (ключ GROQ_API_KEY): Llama 3.3 70B. Дневной лимит небольшой — при отказе разбор уходит в Яндекс. */
+async function askGroq(system: string, text: string): Promise<AskResult> {
+  const model = Deno.env.get('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${Deno.env.get('GROQ_API_KEY')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, temperature: 0.1, max_tokens: 3000, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: text }] }),
+  });
+  if (!res.ok) throw new HttpError(502, `Groq ответил ошибкой ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  return { text: data?.choices?.[0]?.message?.content ?? '', usage: { input: Number(data?.usage?.prompt_tokens || 0), output: Number(data?.usage?.completion_tokens || 0) }, model };
+}
+
+// Примерная цена 1000 токенов в рублях — только для счётчика в логах. Groq на бесплатном тарифе — 0.
+const RUB_PER_1K: Record<string, number> = { 'yandexgpt/latest': 1.2, 'yandexgpt/rc': 1.2, 'yandexgpt-lite/latest': 0.2, 'yandexgpt-lite/rc': 0.2 };
 
 type Img = { data: string; mime: string };
 const IMG_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 
-async function askClaude(system: string, text: string, image?: Img | null): Promise<string> {
+async function askClaude(system: string, text: string, image?: Img | null): Promise<AskResult> {
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
   const mime = (IMG_TYPES as readonly string[]).includes(image?.mime || '') ? image!.mime as typeof IMG_TYPES[number] : 'image/jpeg';
+  const model = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5-5';
   const response = await client.messages.create({
-    model: Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5-5',
+    model,
     max_tokens: 16000,
     output_config: { effort: 'low' },
     system,
@@ -142,7 +163,7 @@ async function askClaude(system: string, text: string, image?: Img | null): Prom
     }],
   });
   if (response.stop_reason === 'refusal') throw new HttpError(422, 'Нейросеть отказалась разбирать этот текст');
-  return response.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+  return { text: response.content.map((b) => (b.type === 'text' ? b.text : '')).join(''), usage: { input: response.usage?.input_tokens || 0, output: response.usage?.output_tokens || 0 }, model };
 }
 
 /** Текст с картинки через Yandex Vision OCR — когда нейросеть Яндекса, которая картинки не читает. */
@@ -172,7 +193,7 @@ Deno.serve(handle(async (req) => {
   const ctx = (await req.json()) as Ctx;
   const image = ctx?.image?.data ? ctx.image : null;
   if (!ctx?.text?.trim() && !image) throw new HttpError(400, 'Пустой текст');
-  let provider = (Deno.env.get('AI_PROVIDER') || (Deno.env.get('YANDEX_API_KEY') ? 'yandex' : 'claude')).toLowerCase();
+  let provider = (Deno.env.get('AI_PROVIDER') || (Deno.env.get('GROQ_API_KEY') ? 'groq' : Deno.env.get('YANDEX_API_KEY') ? 'yandex' : 'claude')).toLowerCase();
   const system = systemPrompt(ctx);
   // Картинку Claude читает сам; если ключа Claude нет — сначала достаём текст с картинки и разбираем его.
   if (image && Deno.env.get('ANTHROPIC_API_KEY')) provider = 'claude';
@@ -183,14 +204,34 @@ Deno.serve(handle(async (req) => {
   } else if (image) {
     ctx.text = ctx.text?.trim() ? `Подпись к картинке: ${ctx.text.trim()}` : 'Разбери, что на картинке.';
   }
-  const ask = (s: string, txt: string) => (provider === 'claude' ? askClaude(s, txt, image) : askYandex(s, txt));
-  const raw = await ask(system, ctx.text);
+  const usage: Usage = { input: 0, output: 0 };
+  let rub = 0, model = '';
+  const count = (r: AskResult) => { usage.input += r.usage.input; usage.output += r.usage.output; rub += ((r.usage.input + r.usage.output) / 1000) * (RUB_PER_1K[r.model] ?? 0); model = r.model; return r.text; };
+  // Groq бесплатный, но с дневным лимитом: если он отказал или ответил не JSON — тот же разбор делает Яндекс (по умолчанию Lite, дешёвая).
+  const spareModel = Deno.env.get('YANDEX_FALLBACK_MODEL') || 'yandexgpt-lite/latest';
+  let spare = false;
+  const ask = async (txt: string): Promise<AskResult> => {
+    if (provider === 'claude') return askClaude(system, txt, image);
+    if (spare) return askYandex(system, txt, spareModel);
+    if (provider !== 'groq') return askYandex(system, txt);
+    try { const r = await askGroq(system, txt); extractJson(r.text); return r; }
+    catch (e) {
+      if (!Deno.env.get('YANDEX_API_KEY')) throw e;
+      console.log(`Groq не ответил, разбирает Яндекс: ${(e as Error).message.slice(0, 200)}`);
+      provider = 'yandex'; spare = true;
+      return askYandex(system, txt, spareModel);
+    }
+  };
+  const raw = count(await ask(ctx.text));
   let parsed = extractJson(raw) as { items?: unknown[] };
   // Пустой ответ — переспрашиваем один раз: модель иногда «теряется» на длинных списках.
   if (!Array.isArray(parsed.items) || !parsed.items.length) {
-    const again = provider === 'claude' ? await askClaude(system, ctx.text, image) : await askYandex(system, `${ctx.text}\n\n(Разбери этот текст на записи. Ответь JSON, в items должна быть хотя бы одна запись.)`);
+    const again = count(await ask(provider === 'claude' ? ctx.text : `${ctx.text}\n\n(Разбери этот текст на записи. Ответь JSON, в items должна быть хотя бы одна запись.)`));
     try { parsed = extractJson(again) as { items?: unknown[] }; } catch { /* оставляем первый ответ */ }
   }
   const items = Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed as unknown[] : [];
-  return json({ items, provider, raw: items.length ? undefined : raw.slice(0, 400) });
+  // Счётчик расхода — в логах функции в Supabase: сколько токенов и примерно рублей ушло на разбор.
+  const approxRub = Math.round(rub * 100) / 100;
+  console.log(JSON.stringify({ provider, model, ...usage, approxRub }));
+  return json({ items, provider, usage, approxRub, raw: items.length ? undefined : raw.slice(0, 400) });
 }));

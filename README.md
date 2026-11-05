@@ -74,6 +74,18 @@
 
 Без этого в приложении: Настройки → Голос → «Браузер».
 
+### 3а. Бесплатный разбор через Groq (по желанию)
+
+Groq — бесплатный тариф с дневным лимитом. Если ключ задан, разбор идёт через Groq,
+а когда лимит кончился или Groq не ответил — тот же разбор делает YandexGPT Lite.
+
+1. console.groq.com → войти → **API Keys** → **Create API Key** → скопировать ключ (`gsk_…`).
+2. Supabase → **Edge Functions** → **Secrets** → **Add new secret**: `GROQ_API_KEY` = ключ.
+3. Если среди секретов есть `AI_PROVIDER` — поменять его значение на `groq` (или удалить).
+
+Сколько ушло на каждый разбор — в логах функции `assistant` (токены и примерные рубли).
+Запасную модель Яндекса можно сменить секретом `YANDEX_FALLBACK_MODEL` (по умолчанию `yandexgpt-lite/latest`).
+
 ### 4. Google Календарь
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → создай проект `Organizer`.
