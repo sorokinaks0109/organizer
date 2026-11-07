@@ -2,7 +2,7 @@
 // оплатила платёж → строка плана отмечена и появился расход; пришла выплата → доход; отложила → копилка.
 import type { useStore } from './store';
 import { todayIso } from './dates';
-import { bounds, incomeRef, monthFrom, PAY, planRef, summarize, type PayKey, type Period } from './money';
+import { bounds, incomeRef, monthFrom, PAY, planRef, summarize, TRANSFER, type PayKey, type Period } from './money';
 import { avansForecast, DEFAULT_PAYROLL, payDay, payrollReady, vacationPayments, zpForecast, type Forecast } from './payroll';
 import type { Expense, Income, MoneyMonth, PlanRow, Wish } from './types';
 
@@ -63,20 +63,31 @@ async function eachLater(store: Store, ym: string, rowId: string, fn: (list: Pla
   for (const m of later) await saveMonth(store, m.ym, (x) => { for (const k of ['avans', 'zp'] as PayKey[]) if (x.plan[k]) x.plan[k] = fn(x.plan[k]!); });
 }
 
-/** Часть резерва — на жизнь: отложенное уменьшается (с последних поступлений), на сегодня появляется доход «на жизнь». */
-export async function reserveToLive(store: Store, amount: number) {
-  let left = amount;
-  const src = store.incomes.filter((i) => i.target === 'reserve').sort((a, b) => b.got_on.localeCompare(a.got_on) || b.created_at.localeCompare(a.created_at));
-  for (const i of src) {
-    if (left <= 0) break;
-    const take = Math.min(left, Number(i.amount));
-    left -= take;
-    if (take >= Number(i.amount)) await store.remove('incomes', { id: i.id });
-    else await store.update('incomes', { id: i.id }, { amount: Number(i.amount) - take });
+/** Взять из резерва на жизнь: в резерве запись «−», в текущих деньгах «+». */
+export async function reserveOut(store: Store, amount: number, what = 'Из резерва') {
+  const day = todayIso();
+  await store.insert('incomes', { what, amount: -amount, source: TRANSFER, got_on: day, target: 'reserve' });
+  await store.insert('incomes', { what, amount, source: TRANSFER, got_on: day, target: 'live' });
+}
+
+/** Отложить в резерв из текущих денег: трата «в резерв» уменьшает свободное, в резерве запись «+». */
+export async function reserveIn(store: Store, amount: number, what = 'Отложено из текущих') {
+  const day = todayIso();
+  await store.insert('expenses', { what: 'В резерв', amount, category: 'Резерв', wb: false, spent_on: day, kind: 'saving' });
+  await store.insert('incomes', { what, amount, source: TRANSFER, got_on: day, target: 'reserve' });
+}
+
+/** Отменить перевод: убрать обе его половины. */
+export async function undoTransfer(store: Store, i: Income) {
+  await store.remove('incomes', { id: i.id });
+  const amt = Math.abs(Number(i.amount));
+  if (Number(i.amount) < 0) {
+    const pair = store.incomes.find((x) => x.source === TRANSFER && x.target === 'live' && x.got_on === i.got_on && Number(x.amount) === amt);
+    if (pair) await store.remove('incomes', { id: pair.id });
+  } else {
+    const pair = store.expenses.find((e) => e.kind === 'saving' && e.category === 'Резерв' && e.spent_on === i.got_on && Number(e.amount) === amt);
+    if (pair) await store.remove('expenses', { id: pair.id });
   }
-  const moved = amount - left;
-  if (moved > 0) await store.insert('incomes', { what: 'Из резерва на жизнь', amount: moved, source: src[0]?.source || 'Прочее', got_on: todayIso(), target: 'live' });
-  return moved;
 }
 
 /** Перенести платёж с аванса на зарплату того же месяца или обратно. */
@@ -183,6 +194,11 @@ export async function saveToWish(store: Store, w: Wish, amount: number) {
 /** Удалить расход так, чтобы всё связанное откатилось: копилка желания уменьшается, оплаченный платёж снова «к оплате». */
 export async function deleteExpense(store: Store, e: Expense) {
   await store.remove('expenses', { id: e.id });
+  // «В резерв» удалили — убираем и запись в резерве.
+  if (e.kind === 'saving' && e.category === 'Резерв') {
+    const pair = store.incomes.find((x) => x.source === TRANSFER && x.target === 'reserve' && x.got_on === e.spent_on && Number(x.amount) === Number(e.amount));
+    if (pair) await store.remove('incomes', { id: pair.id });
+  }
   if (e.kind === 'saving') {
     const w = store.wishes.find((x) => `Копилка: ${x.title}` === e.what);
     if (w) await store.update('wishes', { id: w.id }, { saved_sum: Math.max(0, (Number(w.saved_sum) || 0) - Number(e.amount)) });

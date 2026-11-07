@@ -10,7 +10,9 @@ export const PAY: Record<PayKey, { name: string; day: number; shift: number }> =
   zp: { name: 'Зарплата', day: 13, shift: 1 },
 };
 /** Категории, которые в итогах идут как накопления, а не как прожитые деньги. */
-export const SAVING_CATS = ['Инвестиции', 'Накопления'];
+export const SAVING_CATS = ['Инвестиции', 'Накопления', 'Резерв'];
+/** Источник для переводов между текущими деньгами и резервом: в итогах это не доход. */
+export const TRANSFER = 'Перевод резерва';
 
 const dayOf = (ym: string, d: number) => `${ym}-${String(d).padStart(2, '0')}`;
 
@@ -55,10 +57,12 @@ export function summarize(month: MoneyMonth | null | undefined, p: Period, expen
   const expected = expectedOverride ?? (Number(month?.income[p.key]) || 0);
   const received = !!month?.got[p.key];
   const extra = total(incomes.filter((i) => i.target === 'live' && !i.plan_ref && inRange(i.got_on)), (i) => i.amount);
-  const own = rows.filter((r) => !r.reserve);
+  // «Из резерва» остался только у платежей, оплаченных так раньше; неоплаченные платятся из выплаты, как все.
+  const viaReserve = (r: PlanRow) => !!r.reserve && r.paid;
+  const own = rows.filter((r) => !viaReserve(r));
   const planned = total(own, rowCost);
   const paid = total(own.filter((r) => r.paid), rowCost);
-  const fromReserve = total(rows.filter((r) => r.reserve), rowCost);
+  const fromReserve = total(rows.filter(viaReserve), rowCost);
   const spent = total(expenses.filter((e) => e.kind === 'spend' && inRange(e.spent_on)), (e) => e.amount);
   const saved = total(expenses.filter((e) => e.kind === 'saving' && inRange(e.spent_on)), (e) => e.amount);
   const income = expected + extra;
@@ -69,16 +73,14 @@ export function summarize(month: MoneyMonth | null | undefined, p: Period, expen
   return { period: p, start, end, expected, received, extra, income, rows, planned, paid, left: planned - paid, fromReserve, spent, saved, free, days, daysLeft, perDay };
 }
 
-/** Резерв: отложенные доходы минус платежи, которые на него повешены. */
+/** Резерв — отдельная копилка: всё, что туда отложено, минус взятое обратно и оплаченное из него раньше. */
 export function reserveState(months: MoneyMonth[], incomes: Income[]) {
-  const put = total(incomes.filter((i) => i.target === 'reserve'), (i) => i.amount);
-  let allocated = 0, spentFrom = 0;
-  for (const m of months) for (const k of ['avans', 'zp'] as const) for (const r of m.plan[k] || []) {
-    if (!r.reserve) continue;
-    allocated += rowCost(r);
-    if (r.paid) spentFrom += rowCost(r);
-  }
-  return { put, allocated, free: put - allocated, balance: put - spentFrom };
+  const moves = incomes.filter((i) => i.target === 'reserve');
+  const put = total(moves.filter((i) => Number(i.amount) > 0), (i) => i.amount);
+  const taken = Math.abs(total(moves.filter((i) => Number(i.amount) < 0), (i) => i.amount));
+  let paidFrom = 0;
+  for (const m of months) for (const k of ['avans', 'zp'] as const) for (const r of m.plan[k] || []) if (r.reserve && r.paid) paidFrom += rowCost(r);
+  return { put, taken, paidFrom, balance: put - taken - paidFrom };
 }
 
 /** План следующего месяца: те же суммы выплат и платежи, кроме разовых. */

@@ -39,15 +39,15 @@ describe('итог периода', () => {
   };
   it('считает свободные деньги и сумму в день', () => {
     const s = summarize(month, { ym: '2026-10', key: 'avans' }, [exp({ amount: 342 }), exp({ amount: 5000, kind: 'payment' })], [inc({ amount: 10000 })], '2026-10-29');
-    expect(s.planned).toBe(7850);          // ТСЖ по факту + СГК, страховка из резерва не считается
+    expect(s.planned).toBe(21850);         // ТСЖ по факту + СГК + страховка: неоплаченный платёж с пометкой резерва теперь платится из выплаты
     expect(s.paid).toBe(1850);
-    expect(s.fromReserve).toBe(14000);
+    expect(s.fromReserve).toBe(0);
     expect(s.spent).toBe(342);             // оплаченный платёж — не трата
     expect(s.income).toBe(74000);
-    expect(s.free).toBe(74000 - 7850 - 342);
+    expect(s.free).toBe(74000 - 21850 - 342);
     expect(s.days).toBe(16);
     expect(s.daysLeft).toBe(15);
-    expect(Math.round(s.perDay)).toBe(Math.round((74000 - 7850 - 342) / 15));
+    expect(Math.round(s.perDay)).toBe(Math.round((74000 - 21850 - 342) / 15));
   });
   it('показывает нехватку', () => {
     const s = summarize(month, { ym: '2026-10', key: 'zp' }, [], [], '2026-11-13');
@@ -56,7 +56,9 @@ describe('итог периода', () => {
   });
   it('резерв', () => {
     const r = reserveState([month], [inc({ amount: 80000, target: 'reserve' })]);
-    expect(r).toEqual({ put: 80000, allocated: 14000, free: 66000, balance: 80000 });
+    expect(r).toEqual({ put: 80000, taken: 0, paidFrom: 0, balance: 80000 });
+    const paidVia = { ...month, plan: { avans: [{ id: 'c', name: 'Страховка', sum: 14000, cat: 'Страхование', paid: true, reserve: true }] } };
+    expect(reserveState([paidVia], [inc({ amount: 80000, target: 'reserve' }), inc({ amount: -5000, target: 'reserve' })]).balance).toBe(61000);
   });
   it('новый месяц без разовых платежей', () => {
     const m = monthFrom({ ...month, plan: { avans: [...month.plan.avans!, { id: 'o', name: 'Корпоратив', sum: 2750, cat: 'Прочее', paid: true, once: true }] } }, '2026-11');

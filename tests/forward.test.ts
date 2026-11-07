@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { reserveToLive, saveRowForward } from '../src/lib/moneyActions';
+import { reserveIn, reserveOut, saveRowForward } from '../src/lib/moneyActions';
+import { reserveState } from '../src/lib/money';
 import type { Income, MoneyMonth } from '../src/lib/types';
 
 // Простая замена store: держит таблицы в памяти, snapshot отдаёт текущее состояние.
@@ -27,10 +28,19 @@ describe('постоянные платежи и резерв', () => {
     expect(sum('2026-11')).toBe(14500);
     expect(sum('2026-12')).toBe(14500);
   });
-  it('остаток резерва переводится на жизнь', async () => {
+  it('резерв — отдельная копилка: отложить и взять на жизнь', async () => {
     const { s, db } = fakeStore([], [{ id: 'a', amount: 25000, target: 'reserve', source: 'Отпускные', got_on: '2026-10-29', created_at: '' }]);
-    expect(await reserveToLive(s, 7000)).toBe(7000);
-    expect(db.incomes.find((i) => i.id === 'a')!.amount).toBe(18000);
+    (s as unknown as { expenses: unknown[] }).expenses = db.expenses;
+    (s as unknown as { insert: (t: string, r: Record<string, unknown>) => Promise<unknown> }).insert = async (t, row) => {
+      const r = { id: 'n' + Math.random(), created_at: '', ...row };
+      if (t === 'expenses') db.expenses.push(r); else db.incomes = [...db.incomes, r as never];
+      return r;
+    };
+    await reserveOut(s, 7000, 'Косметолог');
+    expect(reserveState([], db.incomes).balance).toBe(18000);
     expect(db.incomes.find((i) => i.target === 'live')!.amount).toBe(7000);
+    await reserveIn(s, 2000);
+    expect(reserveState([], db.incomes).balance).toBe(20000);
+    expect(db.expenses).toHaveLength(1);
   });
 });

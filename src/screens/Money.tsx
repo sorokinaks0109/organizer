@@ -3,9 +3,9 @@ import { useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, todayIso, WD, ymShift, ymTitle } from '../lib/dates';
-import { bounds, nextPeriod, PAY, periodOf, planRef, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, type PayKey, type Period, type Summary } from '../lib/money';
+import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, TRANSFER, type PayKey, type Period } from '../lib/money';
 import { vacationPayments } from '../lib/payroll';
-import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, monthOrNew, moveRow, payoutFor, payRow, reserveToLive, resetExpected, saveRow, saveRowForward, setExpected, setReserve, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
+import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, monthOrNew, undoTransfer, moveRow, payoutFor, payRow, reserveIn, reserveOut, resetExpected, saveRow, saveRowForward, setExpected, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
 import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 
@@ -94,10 +94,18 @@ function NowTab() {
           <div><span><i style={{ background: 'var(--d-orange)' }} />Траты</span><b>{money(s.spent + s.saved)}</b></div>
           <div><span><i style={{ background: 'var(--ok)' }} />Свободно</span><b style={s.free < 0 ? { color: 'var(--danger)' } : undefined}>{money(s.free)}</b></div>
         </div>
-        {s.free < 0 && <div className="alert"><b>Не хватает {money(-s.free)}.</b> {reserve.free > 0 ? `В резерве свободно ${money(reserve.free)} — повесь на него часть платежей во вкладке «План».` : 'Перенеси часть платежей на другую выплату или уменьши сумму.'}</div>}
+        {s.free < 0 && <div className="alert"><b>Не хватает {money(-s.free)}.</b> Перенеси часть платежей на другую выплату{reserve.balance > 0 ? ` или возьми из резерва (там ${money(reserve.balance)})` : ''}.</div>}
       </div>
 
-      <button type="button" className="addbtn" onClick={() => setSpend('new')}><Icon name="plus" w={2.4} />Добавить трату</button>
+      <div className="row" style={{ gap: 8 }}>
+        <button type="button" className="addbtn" style={{ flex: 2 }} onClick={() => setSpend('new')}><Icon name="plus" w={2.4} />Трата</button>
+        <button type="button" className="addbtn" style={{ flex: 1 }} onClick={() => setIncome('new')}><Icon name="plus" w={2.4} />Доход</button>
+      </div>
+      <button className="resv" type="button" onClick={() => go({ name: 'reserve' })}>
+        <small>Резерв — отложено отдельно</small>
+        <b>{money(reserve.balance)}</b>
+        <small>отложить или взять на жизнь ›</small>
+      </button>
 
       <div className="block">
         <div className="bh"><h4>К оплате до {short(s.end)}</h4><span>{open.length ? money(s.left) : ''}</span></div>
@@ -173,18 +181,19 @@ function PlanTab() {
   const [sheet, setSheet] = useState<{ p: Period; what: 'payout' | 'new' | PlanRow } | null>(null);
   const [income, setIncome] = useState<Partial<Income> | null>(null);
   const reserve = reserveState(store.money_months, store.incomes);
-  let first = periodOf(today);
+  // План начинается со следующей выплаты: текущая — во вкладке «Сейчас».
+  let first = nextPeriod(periodOf(today));
   for (let i = 0; i < back; i++) first = prevPeriod(first);
   const periods: Period[] = [];
   for (let q = first, i = 0; i < 6 + back; q = nextPeriod(q), i++) periods.push(q);
   return (
     <>
       <button className="resv" type="button" onClick={() => go({ name: 'reserve' })}>
-        <small>Резерв (отпускные и другие отложенные деньги)</small>
-        <b>{money(reserve.free)} свободно</b>
-        <small>{reserve.allocated ? `${money(reserve.allocated)} уже разложено по платежам · ` : ''}нажми, чтобы закрыть платежи из резерва ›</small>
+        <small>Резерв — отложено отдельно</small>
+        <b>{money(reserve.balance)}</b>
+        <small>отложить или взять на жизнь ›</small>
       </button>
-      <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setBack(back + 2)}>‹ Показать прошлые выплаты</button>
+      <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setBack(back + 1)}>‹ {back ? 'Ещё раньше' : 'Показать текущую и прошлые выплаты'}</button>
       {periods.map((q) => <PlanCard key={q.ym + q.key} q={q} onSheet={(what) => setSheet({ p: q, what })} onVacation={setIncome} />)}
       {sheet?.what === 'payout' && <PayoutSheet p={sheet.p} onClose={() => setSheet(null)} />}
       {sheet && sheet.what !== 'payout' && <RowSheet key={sheet.what === 'new' ? 'new' : sheet.what.id} p={sheet.p} row={sheet.what === 'new' ? null : sheet.what} onClose={() => setSheet(null)} />}
@@ -240,9 +249,9 @@ function PayRow({ r, p, onEdit }: { r: PlanRow; p: Period; onEdit: () => void })
     toast(`${r.name}: оплачено, в расходах ${money(r.sum)}`);
   };
   return (
-    <div className={'payrow' + (r.paid ? ' on' : '') + (r.reserve ? ' res' : '')}>
+    <div className={'payrow' + (r.paid ? ' on' : '') + (r.reserve && r.paid ? ' res' : '')}>
       <button type="button" className="cb" aria-label={(r.paid ? 'Снять оплату: ' : 'Оплачено: ') + r.name} onClick={tick}>{r.paid ? CHECK : null}</button>
-      <button type="button" className="nm" onClick={onEdit}>{r.name}<small>{r.cat}{r.reserve ? <span className="tagr"> · из резерва</span> : null}{r.paid && r.paid_on ? ` · ${short(r.paid_on)}` : ''}{r.once ? ' · разовый' : ''}</small></button>
+      <button type="button" className="nm" onClick={onEdit}>{r.name}<small>{r.cat}{r.reserve && r.paid ? <span className="tagr"> · из резерва</span> : null}{r.paid && r.paid_on ? ` · ${short(r.paid_on)}` : ''}{r.once ? ' · разовый' : ''}</small></button>
       <span className="sm">{money(rowCost(r))}</span>
     </div>
   );
@@ -282,7 +291,6 @@ export function PayoutSheet({ p, onClose }: { p: Period; onClose: () => void }) 
 
 export function IncomeSheet({ income, preset, onClose }: { income: Income | null; preset?: Partial<Income>; onClose: () => void }) {
   const store = useStore();
-  const { go } = useApp();
   const toast = useToast();
   const base = income ?? preset;
   const [what, setWhat] = useState(base?.what || '');
@@ -303,7 +311,7 @@ export function IncomeSheet({ income, preset, onClose }: { income: Income | null
       if (toReserve > 0) await addIncome(store, { what: name, amount: toReserve, source, got_on: date, target: 'reserve' });
       if (rest > 0) await addIncome(store, { what: name, amount: rest, source, got_on: date, target: 'live' });
       onClose();
-      if (toReserve > 0) { toast(rest > 0 ? `${money(toReserve)} в резерв, ${money(rest)} на жизнь. Выбери, какие платежи закроет резерв` : 'В резерве. Теперь выбери, какие платежи он закроет'); go({ name: 'reserve' }); }
+      if (toReserve > 0) toast(rest > 0 ? `${money(toReserve)} в резерв, ${money(rest)} на жизнь` : `${money(toReserve)} — в резерве`);
       else toast(`+${money(rest)} на жизнь`);
       return;
     }
@@ -323,7 +331,7 @@ export function IncomeSheet({ income, preset, onClose }: { income: Income | null
       <span className="lbl-t">Куда направить</span>
       <div className="target" role="group" aria-label="Куда направить">
         <button type="button" aria-pressed={target === 'live'} onClick={() => setTarget('live')}>На жизнь сейчас<small>прибавится к «можно тратить в день»</small></button>
-        <button type="button" aria-pressed={target === 'reserve'} onClick={() => setTarget('reserve')}>Наперёд на платежи<small>в резерв: выберешь, какие платежи следующих месяцев он закроет</small></button>
+        <button type="button" aria-pressed={target === 'reserve'} onClick={() => setTarget('reserve')}>В резерв<small>отложить отдельно — возьмёшь, когда решишь</small></button>
         {wishes.length > 0 && <button type="button" aria-pressed={target === 'wish'} onClick={() => setTarget('wish')}>В копилку желания<small>сумма прибавится к накопленному</small></button>}
       </div>
       {target === 'reserve' && Number(sum) > 0 && (
@@ -350,7 +358,6 @@ export function RowSheet({ p, row, onClose, note }: { p: Period; row: PlanRow | 
   const [paidSum, setPaidSum] = useState(row?.paid ? String(row.paid_sum ?? row.sum) : '');
   const [cat, setCat] = useState(row?.cat || cats[0]);
   const [once, setOnce] = useState(!!row?.once);
-  const [reserve, setRes] = useState(!!row?.reserve);
   const [forward, setForward] = useState(!row?.once);
   const [busy, setBusy] = useState(false);
   const num = (s: string) => Number(s.replace(/\s/g, '').replace(',', '.'));
@@ -358,10 +365,10 @@ export function RowSheet({ p, row, onClose, note }: { p: Period; row: PlanRow | 
   const save = async () => {
     if (!ok || busy) return;
     setBusy(true);
-    const next: PlanRow = { ...(row || { id: crypto.randomUUID(), paid: false }), name: name.trim(), sum: num(sum), cat, once, reserve };
+    const next: PlanRow = { ...(row || { id: crypto.randomUUID(), paid: false }), name: name.trim(), sum: num(sum), cat, once };
+    if (!next.paid) delete next.reserve;
     if (next.paid) next.paid_sum = num(paidSum) || next.sum;
     if (forward && !once) await saveRowForward(store, p, next); else await saveRow(store, p, next);
-    if (row && row.reserve !== reserve && row.paid) await store.update('expenses', { plan_ref: planRef(p, row.id) }, { from_reserve: reserve });
     onClose();
   };
   return (
@@ -375,11 +382,11 @@ export function RowSheet({ p, row, onClose, note }: { p: Period; row: PlanRow | 
       <label className="lbl" style={{ flex: 'none' }}>Категория<select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>{cats.map((c) => <option key={c}>{c}</option>)}</select></label>
       <label className="toggle-row"><input type="checkbox" className="check" checked={once} onChange={(e) => setOnce(e.target.checked)} /><span>Разовый<br /><small className="mini">в следующий месяц не переносится</small></span></label>
       {!once && <label className="toggle-row"><input type="checkbox" className="check" checked={forward} onChange={(e) => setForward(e.target.checked)} /><span>И в следующих месяцах<br /><small className="mini">{note || 'постоянный платёж: новая сумма и название — дальше тоже'}</small></span></label>}
-      <label className="toggle-row"><input type="checkbox" className="check" checked={reserve} onChange={(e) => setRes(e.target.checked)} /><span>Оплачу из резерва<br /><small className="mini">не уменьшает деньги этой выплаты</small></span></label>
       <div className="row">
         <button className="btn primary" type="button" disabled={!ok || busy} onClick={save}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
         <span style={{ flex: 1 }} />
         {row && <button className="btn" type="button" onClick={async () => { await moveRow(store, p, row); onClose(); }}>{p.key === 'avans' ? 'Платить с зарплаты' : 'Платить с аванса'}</button>}
+        {row && !row.paid && !once && <button className="btn" type="button" onClick={async () => { await deleteRow(store, p, row, false); onClose(); }}>Не платить в этот раз</button>}
         {row && <button className="btn ghost danger" type="button" onClick={async () => { await deleteRow(store, p, row, forward && !once); onClose(); }}>{forward && !once ? 'Удалить совсем' : 'Удалить'}</button>}
       </div>
     </Sheet>
@@ -444,67 +451,58 @@ function SpendSheet({ expense, onClose }: { expense: Expense | null; onClose: ()
   );
 }
 
-/** Резерв: отпускные и другие отложенные деньги раскладываются на платежи следующих выплат. */
+/** Резерв — отдельная копилка: отпускные и то, что отложила сама. Что с неё оплачивать, решаешь сама: «взять на жизнь». */
 export function Reserve() {
   const store = useStore();
   const { go } = useApp();
   const toast = useToast();
-  const today = todayIso();
   const r = reserveState(store.money_months, store.incomes);
-  const periods: Period[] = [];
-  for (let q = periodOf(today), i = 0; i < 6; q = nextPeriod(q), i++) periods.push(q);
-  const sums: Summary[] = periods.map((q) => summaryFor(store, q, today));
-  const put = store.incomes.filter((i) => i.target === 'reserve').sort((a, b) => b.got_on.localeCompare(a.got_on));
+  const moves = store.incomes.filter((i) => i.target === 'reserve').sort((a, b) => (b.got_on + b.created_at).localeCompare(a.got_on + a.created_at));
   const [edit, setEdit] = useState<Income | null>(null);
-  const [out, setOut] = useState<string | null>(null);
-  const moveOut = async () => {
-    const n = Math.min(Number(out) || 0, Math.max(0, r.balance));
+  const [act, setAct] = useState<{ dir: 'in' | 'out'; sum: string; what: string } | null>(null);
+  const run = async () => {
+    if (!act) return;
+    const n = Number(act.sum) || 0;
     if (!(n > 0)) return;
-    const moved = await reserveToLive(store, n);
-    setOut(null);
-    toast(`${money(moved)} из резерва — на жизнь, прибавились к «можно тратить в день»`);
-  };
-  const toggle = async (q: Period, row: PlanRow) => {
-    if (!row.reserve && rowCost(row) > r.free) toast(`В резерве свободно только ${money(r.free)} — платёж уйдёт в минус резерва`);
-    await setReserve(store, q, row.id, !row.reserve);
+    if (act.dir === 'out') { await reserveOut(store, n, act.what.trim() || 'Из резерва'); toast(`${money(n)} из резерва — прибавились к «можно тратить в день»`); }
+    else { await reserveIn(store, n, act.what.trim() || 'Отложено из текущих'); toast(`${money(n)} отложено в резерв`); }
+    setAct(null);
   };
   return (
     <>
       <Hero color="purple" title="Резерв" onBack={() => go({ name: 'money' })}>
-        <div className="big-num" style={{ color: 'var(--d-purple)' }}>{money(r.free)}</div>
-        <span className="mini" style={{ color: 'var(--d-purple)' }}>свободно · всего отложено {money(r.put)}, разложено {money(r.allocated)}, уже оплачено из резерва {money(r.put - r.balance)}</span>
+        <div className="big-num" style={{ color: 'var(--d-purple)' }}>{money(r.balance)}</div>
+        <span className="mini" style={{ color: 'var(--d-purple)' }}>отложено отдельно от денег на жизнь</span>
       </Hero>
-      {r.free > 0 && <button className="btn" type="button" style={{ alignSelf: 'flex-start' }} onClick={() => setOut(String(Math.round(r.free)))}>Перевести остаток на жизнь</button>}
-      <span className="mini">Отметь платежи, которые закроешь из резерва. В их периоде они не будут съедать аванс или зарплату — свободных денег там станет больше.</span>
-      {sums.map((s, i) => {
-        const q = periods[i];
-        const rows = s.rows.filter((x) => !x.paid || x.reserve);
-        return (
-          <div key={q.ym + q.key} className="block">
-            <div className="bh"><h4>{PAY[q.key].name} {short(s.start)}</h4><span style={s.free < 0 ? { color: 'var(--danger)' } : undefined}>{s.free < 0 ? `не хватает ${money(-s.free)}` : `свободно ${money(s.free)}`}</span></div>
-            {!rows.length && <div className="mini">Неоплаченных платежей нет.</div>}
-            {rows.map((x) => (
-              <div key={x.id} className={'payrow res' + (x.reserve ? ' on' : '')}>
-                <button type="button" className="cb" aria-label={(x.reserve ? 'Снять с резерва: ' : 'Из резерва: ') + x.name} disabled={x.paid} onClick={() => toggle(q, x)}>{x.reserve ? CHECK : null}</button>
-                <span className="nm">{x.name}<small>{x.cat}{x.paid ? ' · уже оплачен' : ''}</small></span>
-                <span className="sm">{money(rowCost(x))}</span>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn primary" type="button" style={{ flex: 1 }} disabled={r.balance <= 0} onClick={() => setAct({ dir: 'out', sum: '', what: '' })}>Взять на жизнь</button>
+        <button className="btn" type="button" style={{ flex: 1 }} onClick={() => setAct({ dir: 'in', sum: '', what: '' })}>Отложить</button>
+      </div>
+      <span className="mini">Отпускные и подработку можно сразу отправить сюда при добавлении дохода («В резерв»). Понадобились деньги — «Взять на жизнь»: сумма прибавится к текущей выплате, а в подписи можно написать, на что.</span>
       <div className="block">
-        <div className="bh"><h4>Что отложено</h4></div>
-        {put.map((i) => <button key={i.id} type="button" className="sprow inc" onClick={() => setEdit(i)}><span className="ic">+</span><span>{i.what}<small>{i.source} · {short(i.got_on)} · нажми, чтобы поправить</small></span><span className="sm">+{money(i.amount)}</span></button>)}
-        {!put.length && <div className="mini">Пока ничего. Пришли отпускные — добавь доход и выбери «Наперёд на платежи».</div>}
+        <div className="bh"><h4>Движение</h4></div>
+        {moves.map((i) => {
+          const transfer = i.source === TRANSFER, amt = Number(i.amount);
+          return (
+            <button key={i.id} type="button" className="sprow inc" onClick={() => (transfer ? undefined : setEdit(i))} style={transfer ? { cursor: 'default' } : undefined}>
+              <span className="ic">{amt < 0 ? '−' : '+'}</span>
+              <span>{i.what}<small>{short(i.got_on)}{transfer ? '' : ` · ${i.source} · нажми, чтобы поправить`}</small></span>
+              <span className="sm" style={amt < 0 ? { color: 'var(--ink)' } : undefined}>{amt < 0 ? '−' : '+'}{money(Math.abs(amt))}</span>
+              {transfer && <span role="button" tabIndex={0} className="mini" style={{ textDecoration: 'underline', marginLeft: 8 }} onClick={async (e) => { e.stopPropagation(); await undoTransfer(store, i); toast('Перевод отменён'); }}>отменить</span>}
+            </button>
+          );
+        })}
+        {r.paidFrom > 0 && <div className="kv mini"><span>Раньше оплачено из резерва (платежи)</span><span>−{money(r.paidFrom)}</span></div>}
+        {!moves.length && <div className="mini">Пока пусто.</div>}
       </div>
       {edit && <IncomeSheet key={edit.id} income={edit} onClose={() => setEdit(null)} />}
-      {out !== null && (
-        <Sheet open onClose={() => setOut(null)}>
-          <h3>Из резерва на жизнь</h3>
-          <span className="mini">Сумма уйдёт из резерва и прибавится к деньгам текущей выплаты. Свободно в резерве {money(r.free)}.</span>
-          <input className="field amount" type="number" inputMode="numeric" value={out} aria-label="Сумма" onChange={(e) => setOut(e.target.value)} />
-          <div className="row"><button className="btn primary" type="button" disabled={!(Number(out) > 0)} onClick={moveOut}>Перевести</button></div>
+      {act && (
+        <Sheet open onClose={() => setAct(null)}>
+          <h3>{act.dir === 'out' ? 'Взять из резерва на жизнь' : 'Отложить в резерв'}</h3>
+          <span className="mini">{act.dir === 'out' ? `Прибавится к деньгам текущей выплаты. В резерве ${money(r.balance)}.` : 'Уйдёт из денег текущей выплаты в резерв.'}</span>
+          <input className="field amount" type="number" inputMode="numeric" placeholder="0 ₽" value={act.sum} aria-label="Сумма" onChange={(e) => setAct({ ...act, sum: e.target.value })} />
+          <input className="field" value={act.what} placeholder={act.dir === 'out' ? 'На что (можно не писать): ЖКХ, косметолог…' : 'Зачем (можно не писать)'} aria-label="Подпись" onChange={(e) => setAct({ ...act, what: e.target.value })} />
+          <div className="row"><button className="btn primary" type="button" disabled={!(Number(act.sum) > 0)} onClick={run}>{act.dir === 'out' ? 'Взять' : 'Отложить'}</button></div>
         </Sheet>
       )}
     </>
@@ -523,7 +521,7 @@ export function Stats({ embedded = false }: { embedded?: boolean }) {
   const inM = (d: string, list = months) => list.includes(d.slice(0, 7));
   const isSaving = (e: Expense) => e.kind === 'saving' || SAVING_CATS.includes(e.category);
   const ex = store.expenses.filter((e) => inM(e.spent_on));
-  const inc = store.incomes.filter((i) => inM(i.got_on));
+  const inc = store.incomes.filter((i) => inM(i.got_on) && i.source !== TRANSFER); // переводы с резервом — не доход
   const group = <T,>(list: T[], key: (x: T) => string, val: (x: T) => number) => {
     const g: Record<string, number> = {};
     for (const x of list) g[key(x)] = (g[key(x)] || 0) + val(x);
@@ -620,7 +618,7 @@ export function RecurringCard() {
             <div className="bh" style={{ paddingTop: 8 }}><h4>С выплаты «{PAY[k].name}»</h4><span>{money(rows.reduce((a, r) => a + r.sum, 0))}</span></div>
             {rows.map((r) => (
               <button key={r.id} type="button" className="sprow" onClick={() => setEdit({ key: k, row: r })}>
-                <span className="ic">{abbr(r.cat)}</span><span>{r.name}<small>{r.cat}{r.reserve ? ' · из резерва' : ''}</small></span><span className="sm">{money(r.sum)}</span>
+                <span className="ic">{abbr(r.cat)}</span><span>{r.name}<small>{r.cat}</small></span><span className="sm">{money(r.sum)}</span>
               </button>
             ))}
             <button className="btn ghost" type="button" style={{ paddingInline: 0 }} onClick={() => setEdit({ key: k, row: null })}>+ платёж</button>
