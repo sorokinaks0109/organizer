@@ -81,7 +81,17 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
     setBusy(false); toast(msg); close(); refreshAfter(items);
   };
 
-  const patch = (i: number, p: Partial<Parsed>) => setItems((list) => list!.map((x, j) => (j === i ? ({ ...x, ...p } as Parsed) : x)));
+  const patch = (i: number, p: Partial<Parsed>) => setItems((list) => {
+    const old = list![i];
+    // Переименовали новый проект — дела, привязанные к нему, идут следом.
+    const renamed = old.type === 'project' && 'title' in p && p.title !== old.title ? { from: `new:${old.title}`, to: `new:${p.title}` } : null;
+    return list!.map((x, j) => {
+      if (j === i) return { ...x, ...p } as Parsed;
+      if (renamed && 'project_id' in x && x.project_id === renamed.from) return { ...x, project_id: renamed.to } as Parsed;
+      return x;
+    });
+  });
+  const newProjects = (items || []).filter((x) => x.type === 'project').map((x) => (x as { title: string }).title);
 
   return (
     <Sheet open={open} onClose={close}>
@@ -121,7 +131,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
         <>
           <span className="lbl-t">Проверь и сохрани{lastProvider ? <small className="mini" style={{ fontWeight: 400 }}> · разобрал {PROVIDER[lastProvider] || lastProvider}</small> : null}</span>
           {lastGroqError && <span className="mini" style={{ overflowWrap: 'anywhere' }}>Groq не ответил: {lastGroqError}</span>}
-          {items.map((p, i) => <PreviewCard key={i} p={p} onChange={(x) => patch(i, x)} onRemove={() => setItems(items.filter((_, j) => j !== i))} />)}
+          {items.map((p, i) => <PreviewCard key={i} p={p} newProjects={newProjects} onChange={(x) => patch(i, x)} onRemove={() => setItems(items.filter((_, j) => j !== i))} />)}
           <div className="row">
             <button className="btn primary" type="button" disabled={busy || !items.length} onClick={save}>{busy ? 'Сохраняю…' : 'Сохранить всё'}</button>
             <button className="btn ghost" type="button" onClick={() => setItems(null)}>Назад к тексту</button>
@@ -132,7 +142,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   );
 }
 
-function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Partial<Parsed>) => void; onRemove: () => void }) {
+function PreviewCard({ p, newProjects, onChange, onRemove }: { p: Parsed; newProjects: string[]; onChange: (x: Partial<Parsed>) => void; onRemove: () => void }) {
   const { areas, projects, people, settings, wishes } = useStore();
   const title = parsedLabel(p);
   const editable = p.type !== 'paid' && p.type !== 'health';
@@ -191,9 +201,11 @@ function PreviewCard({ p, onChange, onRemove }: { p: Parsed; onChange: (x: Parti
     </select>
   );
   const projOpts = 'project_id' in p && 'area_id' in p ? projects.filter((x) => !x.done && (!p.area_id || x.area_id === p.area_id)) : [];
-  const projSel = 'project_id' in p && projOpts.length > 0 && (
+  const fresh = p.type === 'project' ? [] : newProjects.filter(Boolean);
+  const projSel = 'project_id' in p && (projOpts.length > 0 || fresh.length > 0) && (
     <select aria-label="Проект" value={p.project_id ?? ''} onChange={(e) => onChange({ project_id: e.target.value || null } as Partial<Parsed>)}>
       <option value="">Без проекта</option>
+      {fresh.map((t) => <option key={'new:' + t} value={'new:' + t}>★ {t} (новый)</option>)}
       {projOpts.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
     </select>
   );

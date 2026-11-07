@@ -44,7 +44,7 @@ ${people}
 - income — полученные деньги (премия, оплата заказа, подарок). Источники: ${c.incomeSources.join(', ')}. Аванс и зарплату как income не записывай.
 - wish — желание, мечта, «хочу когда-нибудь».
 - paid — пользователь оплатил платёж из своего плана («оплатила ТСЖ», «заплатила за интернет 1050»). row_id — из списка ниже; amount — если названа сумма, иначе null. Если такого платежа в списке нет, это expense.
-- project — новый проект в сфере («добавь проекты: приложение по русскому, мультик на заказ» — каждый отдельной записью). status: "idea" | "active" | "wait" | "done", по умолчанию "active".
+- project — новый проект в сфере («добавь проекты: приложение по русскому, мультик на заказ» — каждый отдельной записью). status: "idea" | "active" | "wait" | "done", по умолчанию "active". Если в той же фразе есть дела, заметки или события этого нового проекта — у них project_id null, а new_project — точное название нового проекта, как в его записи.
 - project_update — статус или заметка существующего проекта из списка («по приложению по русскому: доделываю слова», «мультик на паузе, жду ответ заказчика», «блог готов»). status: "idea" | "active" | "wait" | "done" или null, note — коротко где сейчас, или null.
 - event_update — исправить, переименовать, перенести СУЩЕСТВУЮЩЕЕ событие календаря или поставить ему напоминание («исправь», «перенеси», «поменяй время», «переименуй», «напомни за час про стоматолога»). event_id — из списка событий ниже. В title, date, start, end, remind указывай только то, что меняется, остальное null.
 - event_delete — удалить существующее событие («удали», «убери из календаря», «встречу отменили»). event_id — из списка.
@@ -90,9 +90,9 @@ ${health}
 
 Ответь только JSON без пояснений:
 {"items":[
- {"type":"task","title":"...","area_id":"id"|null,"project_id":"id"|null,"date":"YYYY-MM-DD"|null,"time":"HH:MM"|null,"calendar":false,"people":[],"remind":null},
- {"type":"event","title":"...","area_id":"id"|null,"project_id":"id"|null,"date":"YYYY-MM-DD","start":"HH:MM"|null,"end":"HH:MM"|null,"repeat":null,"remind":null,"people":[]},
- {"type":"note","title":"...","area_id":"id"|null,"project_id":"id"|null},
+ {"type":"task","title":"...","area_id":"id"|null,"project_id":"id"|null,"new_project":null,"date":"YYYY-MM-DD"|null,"time":"HH:MM"|null,"calendar":false,"people":[],"remind":null},
+ {"type":"event","title":"...","area_id":"id"|null,"project_id":"id"|null,"new_project":null,"date":"YYYY-MM-DD","start":"HH:MM"|null,"end":"HH:MM"|null,"repeat":null,"remind":null,"people":[]},
+ {"type":"note","title":"...","area_id":"id"|null,"project_id":"id"|null,"new_project":null},
  {"type":"expense","what":"...","amount":число,"category":"...","wb":false,"date":"YYYY-MM-DD"|null},
  {"type":"income","what":"...","amount":число,"source":"...","date":"YYYY-MM-DD"|null,"target":"live"},
  {"type":"paid","row_id":"id","amount":число|null},

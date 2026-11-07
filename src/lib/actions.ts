@@ -98,7 +98,14 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   const pastD = (v: unknown) => { const x = okD(v); return x && x <= todayIso() ? x : null; };
   const okT = (v: unknown) => (typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : null);
   const area = (v: unknown) => (typeof v === 'string' && ids.has(v) ? v : preferArea ?? null);
-  const proj = (v: unknown) => (typeof v === 'string' && pids.has(v) ? v : null);
+  // Дела новой записи могут относиться к проекту, который создаётся в этой же фразе: ссылка «new:<название>».
+  const newTitles = (res.items as Record<string, unknown>[]).filter((x) => x?.type === 'project' && x.title).map((x) => String(x.title).trim());
+  const proj = (v: unknown, np?: unknown) => {
+    if (typeof v === 'string' && pids.has(v)) return v;
+    const t = typeof np === 'string' ? np.trim().toLowerCase() : '';
+    const hit = t && newTitles.find((x) => x.toLowerCase() === t);
+    return hit ? `new:${hit}` : null;
+  };
   const ppl = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && peopleIds.has(x)) : []);
   const out: Parsed[] = [];
   const un = (v: unknown) => (typeof v === 'string' && long.has(v) ? long.get(v)! : v);
@@ -112,9 +119,9 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
     if (raw.type === 'event' && !raw.date && raw.start && okD(raw.start)) { raw.date = raw.start; raw.start = null; }
     const t = raw.type;
     if ((t === 'task' || t === 'note' || t === 'wish') && !raw.title) continue;
-    if (t === 'task') out.push({ type: 'task', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date), time: okT(raw.time), calendar: !!raw.calendar, people: ppl(raw.people), remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null });
-    else if (t === 'event' && raw.title && okD(raw.date)) out.push({ type: 'event', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id), date: okD(raw.date)!, start: okT(raw.start), end: okT(raw.end), repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(raw.repeat as string) ? (raw.repeat as string) : null, remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null, people: ppl(raw.people) });
-    else if (t === 'note') out.push({ type: 'note', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id) });
+    if (t === 'task') out.push({ type: 'task', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id, raw.new_project), date: okD(raw.date), time: okT(raw.time), calendar: !!raw.calendar, people: ppl(raw.people), remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null });
+    else if (t === 'event' && raw.title && okD(raw.date)) out.push({ type: 'event', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id, raw.new_project), date: okD(raw.date)!, start: okT(raw.start), end: okT(raw.end), repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(raw.repeat as string) ? (raw.repeat as string) : null, remind: REMINDS.includes(raw.remind as string) ? (raw.remind as string) : null, people: ppl(raw.people) });
+    else if (t === 'note') out.push({ type: 'note', title: String(raw.title), area_id: area(raw.area_id), project_id: proj(raw.project_id, raw.new_project) });
     else if (t === 'expense' && Number(raw.amount) > 0) out.push({ type: 'expense', what: String(raw.what || 'Без названия'), amount: Math.round(Number(raw.amount)), category: String(raw.category || 'Прочее'), wb: !!raw.wb, date: pastD(raw.date) });
     else if (t === 'income' && Number(raw.amount) > 0) {
       const source = INCOME_SOURCES.includes(raw.source as string) ? (raw.source as string) : 'Прочее';
@@ -166,11 +173,20 @@ export async function markHealth(store: Store, item_id: string, value: number, d
 }
 
 /** Сохраняет разобранные записи. Возвращает текст для всплывающего сообщения. */
-export async function saveParsed(list: Parsed[], store: Store): Promise<string> {
+export async function saveParsed(input: Parsed[], store: Store): Promise<string> {
   let saved = 0; const problems: string[] = []; const done: string[] = [];
+  // Сначала новые проекты: дела из той же фразы ссылаются на них как «new:<название>».
+  const list = [...input.filter((p) => p.type === 'project'), ...input.filter((p) => p.type !== 'project')];
+  const created = new Map<string, { id: string; area_id: string | null }>();
+  const link = <T extends { project_id: string | null; area_id: string | null }>(p: T): T => {
+    if (!p.project_id?.startsWith('new:')) return p;
+    const pr = created.get(p.project_id.slice(4).toLowerCase());
+    return { ...p, project_id: pr?.id ?? null, area_id: p.area_id ?? pr?.area_id ?? null };
+  };
   const emails = (ids?: string[]) => (ids || []).map((id) => store.people.find((p) => p.id === id)?.email).filter((x): x is string => !!x);
-  for (const p of list) {
+  for (const orig of list) {
     const before = saved;
+    const p = orig.type === 'task' || orig.type === 'note' || orig.type === 'event' ? link(orig) : orig;
     try {
       if (p.type === 'task' || p.type === 'note') {
         const row = await store.insert('items', { kind: p.type, title: p.title, area_id: p.area_id, project_id: p.project_id, due_date: p.type === 'task' ? p.date : null, due_time: p.type === 'task' ? p.time : null });
@@ -200,7 +216,9 @@ export async function saveParsed(list: Parsed[], store: Store): Promise<string> 
         await callFn('gcal', { action: 'delete', id: p.event_id, calendarId: p.calendarId });
         await store.remove('event_links', { event_id: p.event_id }); saved++;
       } else if (p.type === 'project') {
-        await store.insert('projects', { name: p.title, area_id: p.area_id, status: p.status, done: p.status === 'done', note: p.note, keywords: [], sort: store.projects.length }); saved++;
+        const row = await store.insert('projects', { name: p.title, area_id: p.area_id, status: p.status, done: p.status === 'done', note: p.note, keywords: [], sort: store.projects.length });
+        if (row) created.set(p.title.trim().toLowerCase(), { id: row.id, area_id: p.area_id });
+        saved++;
       } else if (p.type === 'project_update') {
         await store.update('projects', { id: p.project_id }, { ...(p.status ? { status: p.status, done: p.status === 'done' } : {}), ...(p.note ? { note: p.note } : {}), status_at: new Date().toISOString() }); saved++;
       } else if (p.type === 'task_update') {
