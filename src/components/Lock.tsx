@@ -41,8 +41,13 @@ export function PinGate({ children }: { children: ReactNode }) {
   }, []);
 
   if (!stored) return <PinPad title="Придумай код для входа" hint="4 цифры. Приложение будет спрашивать его при каждом открытии." confirm onDone={setPin} />;
-  if (locked) return <PinPad title="Органайзер" hint="Введи код" check={async (pin) => (await digest(pin, stored.salt)) === stored.hash} onDone={() => setLocked(false)} />;
-  return <>{children}</>;
+  // Код закрывает приложение поверх, а не вместо: открытые окна и недописанное остаются как были.
+  return (
+    <>
+      {locked && <PinPad title="Органайзер" hint="Введи код" check={async (pin) => (await digest(pin, stored.salt)) === stored.hash} onDone={() => setLocked(false)} />}
+      <div style={{ display: locked ? 'none' : 'contents' }} aria-hidden={locked}>{children}</div>
+    </>
+  );
 }
 
 function PinPad({ title, hint, confirm, check, onDone }: { title: string; hint: string; confirm?: boolean; check?: (pin: string) => Promise<boolean>; onDone: (pin: string) => void }) {

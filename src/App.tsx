@@ -15,7 +15,7 @@ import { AreaView, Tiles } from './screens/Areas';
 import { Money, Reserve, Stats } from './screens/Money';
 import { Wishes } from './screens/Wishes';
 import { Settings } from './screens/Settings';
-import { Capture } from './screens/Capture';
+import { Capture, readDraft } from './screens/Capture';
 import { EventSheet, ItemSheet } from './screens/Sheets';
 
 export function Root() {
@@ -54,7 +54,8 @@ function Shell() {
   const [view, setView] = useState<View>(() => (history.state as View | null) ?? { name: 'today' });
   const [item, setItem] = useState<{ it: Item | null; preset?: Partial<Item> } | null>(null);
   const [event, setEvent] = useState<CalEvent | null>(null);
-  const [capture, setCapture] = useState<{ area: string | null } | null>(null);
+  // Недосохранённая запись (телефон выгрузил страницу) — сразу открываем её снова.
+  const [capture, setCapture] = useState<{ area: string | null } | null>(() => (readDraft() ? { area: null } : null));
   // Ссылка с готовыми зарплатными данными (#setup=…): спрашиваем и сохраняем в настройки.
   const [setup, setSetup] = useState<Payroll | null>(() => {
     const m = location.hash.match(/^#setup=([\w-]+)/);

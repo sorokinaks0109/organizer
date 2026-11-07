@@ -1,5 +1,5 @@
 // Большая кнопка «+»: надиктовать что угодно, нейросеть разложит по сферам и проектам, в календарь — что нужно.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { useDictation } from '../lib/voice';
@@ -25,12 +25,25 @@ function RemindSel({ value, allDay, onChange }: { value: string | null; allDay: 
   );
 }
 
+// Черновик записи: если телефон выгрузил страницу до «Сохранить», при следующем открытии всё вернётся.
+const DRAFT = 'org.capture.draft';
+type Draft = { text: string; items: Parsed[] | null; at: number };
+export function readDraft(): Draft | null {
+  try { const d = JSON.parse(localStorage.getItem(DRAFT) || 'null') as Draft | null; return d && Date.now() - d.at < 2 * 864e5 && (d.text.trim() || d.items?.length) ? d : null; } catch { return null; }
+}
+const clearDraft = () => { try { localStorage.removeItem(DRAFT); } catch { /* нет хранилища */ } };
+
 export function Capture({ open, onClose, preferArea }: { open: boolean; onClose: () => void; preferArea?: string | null }) {
   const store = useStore();
   const { events, refreshEvents } = useApp();
   const toast = useToast();
-  const [text, setText] = useState('');
-  const [items, setItems] = useState<Parsed[] | null>(null);
+  const [draft] = useState(() => (open ? readDraft() : null));
+  const [text, setText] = useState(draft?.text ?? '');
+  const [items, setItems] = useState<Parsed[] | null>(draft?.items ?? null);
+  useEffect(() => {
+    if (!open) return;
+    try { if (text.trim() || items?.length) localStorage.setItem(DRAFT, JSON.stringify({ text, items, at: Date.now() })); else localStorage.removeItem(DRAFT); } catch { /* без черновика */ }
+  }, [open, text, items]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [image, setImage] = useState<{ data: string; mime: string; preview: string } | null>(null);
@@ -42,7 +55,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   // По умолчанию диктуем микрофоном клавиатуры: на телефоне он распознаёт русский лучше всего.
   const keyboard = (store.settings.voice ?? 'keyboard') === 'keyboard';
 
-  const close = () => { dict.stop(); setBoth(''); setItems(null); setErr(null); setImage(null); onClose(); };
+  const close = () => { dict.stop(); clearDraft(); setBoth(''); setItems(null); setErr(null); setImage(null); onClose(); };
 
   const pick = async (f: File | undefined) => {
     if (!f) return;
@@ -96,6 +109,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
   return (
     <Sheet open={open} onClose={close}>
       <h3>Что записать?</h3>
+      {draft && <span className="alert ok" style={{ margin: 0 }}>Вернула то, что ты не успела сохранить. Проверь и нажми «Сохранить всё» или закрой крестиком, если не нужно.</span>}
       {keyboard ? (
         <p className="kbd-hint">Нажми <b>🎙 на клавиатуре</b> и говори как есть: «поставь мне и Мите в пятницу кино», «к среде отчёт», «такси 342», «перенеси стоматолога на четверг».</p>
       ) : (
