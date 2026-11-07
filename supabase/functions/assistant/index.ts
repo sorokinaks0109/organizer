@@ -127,15 +127,37 @@ async function askYandex(system: string, text: string, model = Deno.env.get('YAN
   return { text: data?.result?.alternatives?.[0]?.message?.text ?? '', usage: { input: Number(u.inputTextTokens || 0), output: Number(u.completionTokens || 0) }, model };
 }
 
-/** Groq, бесплатный тариф (ключ GROQ_API_KEY): Llama 3.3 70B. Дневной лимит небольшой — при отказе разбор уходит в Яндекс. */
-async function askGroq(system: string, text: string): Promise<AskResult> {
-  const model = Deno.env.get('GROQ_MODEL') || 'llama-3.3-70b-versatile';
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+/** Groq, бесплатный тариф (ключ GROQ_API_KEY). Дневной лимит небольшой — при отказе разбор уходит в Яндекс.
+ *  Groq время от времени убирает модели, поэтому если модель пропала — берём лучшую из тех, что есть сейчас. */
+let groqModel = '';
+const GROQ_PREFER = ['openai/gpt-oss-120b', 'moonshotai/kimi', 'meta-llama/llama-4-maverick', 'qwen/', 'llama-4-scout', 'llama-3.3-70b', 'openai/gpt-oss-20b', 'llama'];
+
+async function groqPickModel(): Promise<string> {
+  const res = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${Deno.env.get('GROQ_API_KEY')}` } });
+  if (!res.ok) throw new HttpError(502, `Groq: не удалось получить список моделей (${res.status})`);
+  const ids = ((await res.json())?.data || []).map((m: { id: string }) => m.id)
+    .filter((id: string) => !/whisper|tts|guard|compound|playai|distil|vision/i.test(id));
+  for (const p of GROQ_PREFER) { const hit = ids.find((id: string) => id.includes(p)); if (hit) return hit; }
+  if (!ids.length) throw new HttpError(502, 'Groq: нет доступных моделей');
+  return ids[0];
+}
+
+async function groqCall(model: string, system: string, text: string, jsonMode: boolean) {
+  return fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${Deno.env.get('GROQ_API_KEY')}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, temperature: 0.1, max_tokens: 3000, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: text }] }),
+    body: JSON.stringify({ model, temperature: 0.1, max_tokens: 3000, ...(jsonMode ? { response_format: { type: 'json_object' } } : {}), messages: [{ role: 'system', content: system }, { role: 'user', content: text }] }),
   });
+}
+
+async function askGroq(system: string, text: string): Promise<AskResult> {
+  let model = groqModel || Deno.env.get('GROQ_MODEL') || 'openai/gpt-oss-120b';
+  let res = await groqCall(model, system, text, true);
+  if (res.status === 404) { model = groqModel = await groqPickModel(); res = await groqCall(model, system, text, true); }
+  // Не все модели умеют строгий JSON-режим — тогда без него, JSON достанем из текста.
+  if (res.status === 400) { const body = await res.text(); if (/response_format|json/i.test(body)) res = await groqCall(model, system, text, false); else throw new HttpError(502, `Groq ответил ошибкой 400: ${body.slice(0, 300)}`); }
   if (!res.ok) throw new HttpError(502, `Groq ответил ошибкой ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  groqModel = model;
   const data = await res.json();
   return { text: data?.choices?.[0]?.message?.content ?? '', usage: { input: Number(data?.usage?.prompt_tokens || 0), output: Number(data?.usage?.completion_tokens || 0) }, model };
 }
