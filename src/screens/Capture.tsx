@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { useDictation } from '../lib/voice';
-import { imageForAi, lastProvider, parsedLabel, parseVoice, saveParsed } from '../lib/actions';
+import { imageForAi, lastGroqError, lastProvider, parsedLabel, parseVoice, saveParsed } from '../lib/actions';
 const PROVIDER: Record<string, string> = { groq: 'Groq, бесплатно', yandex: 'YandexGPT', claude: 'Claude' };
 import { fmtDate, money, parseIso, MON } from '../lib/dates';
 import { DEFAULT_HEALTH, DEFAULT_SPEND_CATS, INCOME_SOURCES, PROJECT_STATUS, type Parsed, type ProjectStatus } from '../lib/types';
@@ -120,6 +120,7 @@ export function Capture({ open, onClose, preferArea }: { open: boolean; onClose:
       {items && (
         <>
           <span className="lbl-t">Проверь и сохрани{lastProvider ? <small className="mini" style={{ fontWeight: 400 }}> · разобрал {PROVIDER[lastProvider] || lastProvider}</small> : null}</span>
+          {lastGroqError && <span className="mini" style={{ overflowWrap: 'anywhere' }}>Groq не ответил: {lastGroqError}</span>}
           {items.map((p, i) => <PreviewCard key={i} p={p} onChange={(x) => patch(i, x)} onRemove={() => setItems(items.filter((_, j) => j !== i))} />)}
           <div className="row">
             <button className="btn primary" type="button" disabled={busy || !items.length} onClick={save}>{busy ? 'Сохраняю…' : 'Сохранить всё'}</button>

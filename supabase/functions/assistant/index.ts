@@ -209,7 +209,7 @@ Deno.serve(handle(async (req) => {
   const count = (r: AskResult) => { usage.input += r.usage.input; usage.output += r.usage.output; rub += ((r.usage.input + r.usage.output) / 1000) * (RUB_PER_1K[r.model] ?? 0); model = r.model; return r.text; };
   // Groq бесплатный, но с дневным лимитом: если он отказал или ответил не JSON — тот же разбор делает Яндекс (по умолчанию Lite, дешёвая).
   const spareModel = Deno.env.get('YANDEX_FALLBACK_MODEL') || 'yandexgpt-lite/latest';
-  let spare = false;
+  let spare = false, groqError = '';
   const ask = async (txt: string): Promise<AskResult> => {
     if (provider === 'claude') return askClaude(system, txt, image);
     if (spare) return askYandex(system, txt, spareModel);
@@ -217,7 +217,8 @@ Deno.serve(handle(async (req) => {
     try { const r = await askGroq(system, txt); extractJson(r.text); return r; }
     catch (e) {
       if (!Deno.env.get('YANDEX_API_KEY')) throw e;
-      console.log(`Groq не ответил, разбирает Яндекс: ${(e as Error).message.slice(0, 200)}`);
+      groqError = (e as Error).message.replace(/gsk_[A-Za-z0-9]+/g, 'gsk_…').slice(0, 200);
+      console.log(`Groq не ответил, разбирает Яндекс: ${groqError}`);
       provider = 'yandex'; spare = true;
       return askYandex(system, txt, spareModel);
     }
@@ -233,5 +234,5 @@ Deno.serve(handle(async (req) => {
   // Счётчик расхода — в логах функции в Supabase: сколько токенов и примерно рублей ушло на разбор.
   const approxRub = Math.round(rub * 100) / 100;
   console.log(JSON.stringify({ provider, model, ...usage, approxRub }));
-  return json({ items, provider, usage, approxRub, raw: items.length ? undefined : raw.slice(0, 400) });
+  return json({ items, provider, usage, approxRub, groqError: groqError || undefined, raw: items.length ? undefined : raw.slice(0, 400) });
 }));

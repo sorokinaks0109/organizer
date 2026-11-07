@@ -57,6 +57,8 @@ export async function imageForAi(file: File): Promise<{ data: string; mime: stri
 
 /** Кто разобрал последнюю запись: groq, yandex или claude — показывается мелко под карточками. */
 export let lastProvider = '';
+/** Почему Groq не ответил (если разбор ушёл запасному Яндексу) — показывается рядом, чтобы не искать в логах. */
+export let lastGroqError = '';
 
 export async function parseVoice(text: string, store: Store, preferArea?: string | null, calendar: CalEvent[] = [], image?: { data: string; mime: string } | null): Promise<Parsed[]> {
   const { areas, projects, people, settings } = store;
@@ -75,7 +77,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
   // Вместо длинных id (36–50 знаков) — короткие метки «a1», «e3»: нейросеть считает объём текста, а id в нём — большая часть.
   const short = new Map<string, string>(), long = new Map<string, string>();
   const al = (prefix: string, id: string) => { const k = `${prefix}:${id}`; let s = short.get(k); if (!s) { s = prefix + (short.size + 1); short.set(k, s); long.set(s, id); } return s; };
-  const res = await callFn<{ items: Parsed[]; raw?: string; provider?: string }>('assistant', {
+  const res = await callFn<{ items: Parsed[]; raw?: string; provider?: string; groqError?: string }>('assistant', {
     text: preferArea ? `${text}\n\n(Записано внутри сферы «${areas.find((a) => a.id === preferArea)?.name}» — если не сказано иное, клади туда.)` : text,
     today: todayIso(), weekday: WD_FULL[d.getDay()],
     areas: ordered.map((a) => ({ id: al('a', a.id), name: a.name, keywords: (a.keywords || []).slice(0, 8), projects: projects.filter((p) => p.area_id === a.id && !p.done).map((p) => ({ id: al('p', p.id), name: p.name, status: PROJECT_STATUS[p.status ?? 'active'].name })) })),
@@ -88,7 +90,7 @@ export async function parseVoice(text: string, store: Store, preferArea?: string
     tasks: openTasks.map((t) => ({ id: al('t', t.id), title: t.title, date: t.due_date })),
     image: image ? { data: image.data, mime: image.mime } : null,
   });
-  lastProvider = res.provider || '';
+  lastProvider = res.provider || ''; lastGroqError = res.groqError || '';
   const ids = new Set(areas.map((a) => a.id)), pids = new Set(projects.map((p) => p.id)), peopleIds = new Set(people.map((p) => p.id));
   const okD = (v: unknown) => normDate(v);
   // Траты и доходы не бывают в будущем: если нейросеть перенесла на них дату события — ставим сегодня.
