@@ -223,8 +223,13 @@ Deno.serve(handle(async (req) => {
       return askYandex(system, txt, spareModel);
     }
   };
-  const raw = count(await ask(ctx.text));
-  let parsed = extractJson(raw) as { items?: unknown[] };
+  const tryParse = (s: string) => { try { return extractJson(s) as { items?: unknown[] }; } catch { return null; } };
+  let raw = count(await ask(ctx.text));
+  let maybe = tryParse(raw);
+  // Lite иногда пишет сломанный JSON — тогда тот же разбор делает основная модель Яндекса.
+  if (!maybe && spare) { spare = false; raw = count(await askYandex(system, ctx.text)); maybe = tryParse(raw); }
+  if (!maybe) throw new HttpError(502, `Нейросеть ответила с ошибкой в формате, попробуй ещё раз${groqError ? `. Groq не ответил: ${groqError}` : ''}`);
+  let parsed = maybe;
   // Пустой ответ — переспрашиваем один раз: модель иногда «теряется» на длинных списках.
   if (!Array.isArray(parsed.items) || !parsed.items.length) {
     const again = count(await ask(provider === 'claude' ? ctx.text : `${ctx.text}\n\n(Разбери этот текст на записи. Ответь JSON, в items должна быть хотя бы одна запись.)`));
