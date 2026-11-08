@@ -37,7 +37,7 @@ export function EventCard({ e, showDay }: { e: CalEvent; showDay?: boolean }) {
   const c = classify(e, event_links, areas, projects);
   const a = areas.find((x) => x.id === c.area);
   const m = e.title.match(SUB_NUM);
-  const mark = trainMark(store, e.id);
+  const mark = trainMark(store, e.id, e.title);
   const d = parseIso(e.day);
   return (
     <button type="button" className={'evcard' + (isCancelled(e.title) ? ' cancel' : '') + (mark ? ' st-' + mark : '')} style={{ ...sc(a?.color || 'gray'), textAlign: 'left', width: '100%' }} onClick={() => openEvent(e)}>

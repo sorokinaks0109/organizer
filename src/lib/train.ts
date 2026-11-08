@@ -10,11 +10,13 @@ export type TrainPay = { id: string; date: string; sum: number | null; note?: st
 
 export const MARK_NAME: Record<TrainMark, string> = { went: 'была', excused: 'пропуск по уважительной причине', missed: 'пропуск без уважительной причины' };
 
-export function trainMark(store: Pick<Store, 'settings' | 'event_links'>, id: string): TrainMark | null {
+export function trainMark(store: Pick<Store, 'settings' | 'event_links'>, id: string, title = ''): TrainMark | null {
   const m = store.settings.trainMarks?.[id];
   if (m) return m;
   const old = store.event_links.find((x) => x.event_id === id)?.mark;
-  return old === 'went' || old === 'missed' ? old : null;
+  if (old === 'went' || old === 'missed') return old;
+  // В названии события уже написано «пропуск» — считаем пропуском без уважительной, пока не отмечено иначе.
+  return /пропуск/i.test(title) ? (/уважит/i.test(title) && !/без уваж/i.test(title) ? 'excused' : 'missed') : null;
 }
 
 export async function setTrainMark(store: Store, id: string, mark: TrainMark | null) {

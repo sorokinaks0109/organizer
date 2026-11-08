@@ -111,7 +111,7 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
   const [state, setState] = useState('');
 
   // Отметка — у конкретного занятия; сфера и проект — у всей серии.
-  const mark = trainMark(store, e.id);
+  const mark = trainMark(store, e.id, e.title);
   const setMark = (m: TrainMark | null) => setTrainMark(store, e.id, m);
   const setPlace = (area_id: string | null, project_id: string | null) => store.upsert('event_links', { event_id: series, area_id, project_id, mark: series === e.id ? link?.mark ?? null : seriesLink?.mark ?? null });
 
@@ -123,7 +123,12 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
       const res = await callFn<{ events: { id: string; calendarId: string; title: string; start: string }[] }>('gcal', { action: 'list', from: addDays(t0, -90).toISOString(), to: addDays(t0, 200).toISOString(), q: prefix });
       const list = res.events.filter((x) => x.title.startsWith(prefix) && x.calendarId === e.calendarId).sort((a, b) => a.start.localeCompare(b.start));
       const idx = list.findIndex((x) => x.id === e.id); if (idx < 0) throw new Error('Не нашла это занятие в календаре');
-      const total = Number((list.find((x) => SUB_NUM.test(x.title))?.title.match(SUB_NUM) || [0, 0, 16])[2]);
+      // Сколько занятий в абонементе — по ближайшему к этому занятию номеру (сначала назад, потом вперёд),
+      // а не по самому старому событию: у прошлых абонементов могло быть другое число («из 12»).
+      let near: string | undefined;
+      for (let j = idx; j >= 0 && !near; j--) if (SUB_NUM.test(list[j].title)) near = list[j].title;
+      for (let j = idx + 1; j < list.length && !near; j++) if (SUB_NUM.test(list[j].title)) near = list[j].title;
+      const total = Number((near?.match(SUB_NUM) || [0, 0, 16])[2]);
       const before = (i: number) => { for (let j = i - 1; j >= 0; j--) { if (isCancelled(list[j].title)) continue; const mm = list[j].title.match(SUB_NUM); return mm ? (Number(mm[1]) >= Number(mm[2]) ? 0 : Number(mm[1])) : 0; } return 0; };
       const fmt = (k: number) => `${prefix} №${k} из ${total}` + (k === 1 ? ' — начало абонемента' : '') + (k === total ? '. Абонемент закрыт.' : '');
       const upd: { id: string; calendarId: string; title: string; start: string }[] = [];

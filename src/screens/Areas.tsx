@@ -118,7 +118,7 @@ function Subscription({ list }: { list: CalEvent[] }) {
   const next = list.filter((e) => e.day >= t && !isCancelled(e.title) && SUB_NUM.test(e.title)).sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time))[0];
   const nm = next?.title.match(SUB_NUM)?.map(Number);
   const past = list.filter((e) => e.day < t && !isCancelled(e.title));
-  const mark = (e: CalEvent) => trainMark(store, e.id);
+  const mark = (e: CalEvent) => trainMark(store, e.id, e.title);
   return (
     <div className="card" style={sc('pink')}>
       <div className="card-t">Абонемент</div>
@@ -146,7 +146,7 @@ function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => v
   const past = uniq.filter((e) => e.day <= t && (!from || e.day >= from)).sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time));
   const shownPays = pays.filter((p) => !from || p.date >= from);
   const prefix = (list[0]?.title.match(/^(.*?)(?=\s*[:№]|\s*отмен)/i)?.[1] || 'Занятия').trim();
-  const text = attendanceText(past, (e) => trainMark(store, e.id), shownPays, prefix);
+  const text = attendanceText(past, (e) => trainMark(store, e.id, e.title), shownPays, prefix);
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); toast('Скопировано — вставь в чат с преподавателем'); }
     catch { toast('Не получилось скопировать — выдели текст ниже и скопируй вручную'); }
@@ -176,7 +176,7 @@ function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => v
       <span className="lbl-t">Занятия</span>
       {!past.length && <span className="mini">Прошедших занятий за этот срок нет в календаре.</span>}
       {past.map((e) => {
-        const m = trainMark(store, e.id), canc = isCancelled(e.title), num = e.title.match(SUB_NUM)?.[1];
+        const m = trainMark(store, e.id, e.title), canc = isCancelled(e.title), num = e.title.match(SUB_NUM)?.[1];
         return (
           <div key={e.id} className="pv-card" style={{ gap: 6 }}>
             <span><b>{fmtDate(e.day)}</b>{e.time ? `, ${e.time}` : ''}{num ? ` · №${num}` : ''}</span>
