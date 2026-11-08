@@ -139,12 +139,15 @@ function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => v
   const toast = useToast();
   const t = todayIso();
   const pays = store.settings.trainPays || [];
-  const lastPay = [...pays].sort((a, b) => b.date.localeCompare(a.date))[0]?.date;
-  const [from, setFrom] = useState(lastPay || '');
-  const [pay, setPay] = useState<{ date: string; sum: string; note: string } | null>(null);
   const uniq = [...new Map(list.map((e) => [e.id, e])).values()];
+  // Текущий абонемент начинается с последнего занятия «№1» до сегодняшнего дня.
+  const start = uniq.filter((e) => e.day <= t && e.title.match(SUB_NUM)?.[1] === '1').map((e) => e.day).sort().pop() || '';
+  const [from, setFrom] = useState(start);
+  const [pay, setPay] = useState<{ date: string; sum: string; note: string } | null>(null);
   const past = uniq.filter((e) => e.day <= t && (!from || e.day >= from)).sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time));
-  const shownPays = pays.filter((p) => !from || p.date >= from);
+  // Оплата обычно чуть раньше первого занятия — показываем оплаты за 3 недели до начала и позже.
+  const payFrom = from ? iso(addDays(new Date(from + 'T00:00:00'), -21)) : '';
+  const shownPays = pays.filter((p) => !payFrom || p.date >= payFrom);
   const prefix = (list[0]?.title.match(/^(.*?)(?=\s*[:№]|\s*отмен)/i)?.[1] || 'Занятия').trim();
   const text = attendanceText(past, (e) => trainMark(store, e.id, e.title), shownPays, prefix);
   const copy = async () => {
@@ -160,7 +163,7 @@ function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => v
   return (
     <Sheet open onClose={onClose}>
       <h3>Посещения</h3>
-      <label className="lbl" style={{ flex: 'none' }}>С какого числа<input className="field" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+      <label className="lbl" style={{ flex: 'none' }}>Текущий абонемент — с какого числа<input className="field" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
       <span className="lbl-t">Оплаты абонемента</span>
       {shownPays.map((p) => (
         <div key={p.id} className="kv"><span>{fmtDate(p.date)}{p.note ? ` · ${p.note}` : ''}</span><span>{p.sum ? `${p.sum.toLocaleString('ru-RU')} ₽ ` : ''}<button type="button" className="x" aria-label="Удалить оплату" onClick={() => store.saveSettings({ trainPays: pays.filter((x) => x.id !== p.id) })}>×</button></span></div>
