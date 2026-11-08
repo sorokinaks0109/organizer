@@ -2,6 +2,7 @@
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM, type CalEvent } from '../lib/gcal';
+import { trainMark } from '../lib/train';
 import { fmtDate, parseIso, todayIso, WD, MON } from '../lib/dates';
 import type { Item } from '../lib/types';
 import { Icon, sc } from './ui';
@@ -30,19 +31,20 @@ export function TaskCard({ t, showArea }: { t: Item; showArea?: boolean }) {
 }
 
 export function EventCard({ e, showDay }: { e: CalEvent; showDay?: boolean }) {
-  const { event_links, areas, projects } = useStore();
+  const store = useStore();
+  const { event_links, areas, projects } = store;
   const { openEvent } = useApp();
   const c = classify(e, event_links, areas, projects);
   const a = areas.find((x) => x.id === c.area);
   const m = e.title.match(SUB_NUM);
-  const mark = event_links.find((x) => x.event_id === e.id)?.mark;
+  const mark = trainMark(store, e.id);
   const d = parseIso(e.day);
   return (
     <button type="button" className={'evcard' + (isCancelled(e.title) ? ' cancel' : '') + (mark ? ' st-' + mark : '')} style={{ ...sc(a?.color || 'gray'), textAlign: 'left', width: '100%' }} onClick={() => openEvent(e)}>
       <span className="evic">{m ? <b className="num-badge">{m[1]}</b> : <Icon name="cal" w={1.8} />}</span>
       <span className="evb">
         <span className="evt">{e.title}</span>
-        <small>{[showDay ? `${WD[d.getDay()]}, ${d.getDate()} ${MON[d.getMonth()]}` : null, e.time ? (e.endTime ? `${e.time}–${e.endTime}` : e.time) : 'весь день', e.family ? 'календарь «Семья»' : null, mark === 'went' ? 'была' : mark === 'missed' ? 'пропустила' : null].filter(Boolean).join(' · ')}</small>
+        <small>{[showDay ? `${WD[d.getDay()]}, ${d.getDate()} ${MON[d.getMonth()]}` : null, e.time ? (e.endTime ? `${e.time}–${e.endTime}` : e.time) : 'весь день', e.family ? 'календарь «Семья»' : null, mark === 'went' ? 'была' : mark === 'excused' ? 'пропуск, уважительная' : mark === 'missed' ? 'пропустила' : null].filter(Boolean).join(' · ')}</small>
       </span>
     </button>
   );

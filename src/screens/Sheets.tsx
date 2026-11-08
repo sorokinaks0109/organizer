@@ -5,6 +5,7 @@ import { useApp } from '../lib/context';
 import { supabase, callFn } from '../lib/supabase';
 import { createCalendarEvent } from '../lib/actions';
 import { classify, isCancelled, seriesId, SUB_NUM, type CalEvent } from '../lib/gcal';
+import { setTrainMark, trainMark, type TrainMark } from '../lib/train';
 import { addDays, cap1, MON, parseIso, plural, todayIso, WD_FULL } from '../lib/dates';
 import type { FileRef, Item } from '../lib/types';
 import { Chip, Sheet, useToast } from '../components/ui';
@@ -110,7 +111,8 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
   const [state, setState] = useState('');
 
   // Отметка — у конкретного занятия; сфера и проект — у всей серии.
-  const setMark = (mark: 'went' | 'missed' | null) => store.upsert('event_links', { event_id: e.id, area_id: link?.area_id ?? null, project_id: link?.project_id ?? null, mark });
+  const mark = trainMark(store, e.id);
+  const setMark = (m: TrainMark | null) => setTrainMark(store, e.id, m);
   const setPlace = (area_id: string | null, project_id: string | null) => store.upsert('event_links', { event_id: series, area_id, project_id, mark: series === e.id ? link?.mark ?? null : seriesLink?.mark ?? null });
 
   const prepareRenumber = async (cancel: boolean) => {
@@ -143,7 +145,7 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
     let n = 0;
     try {
       for (const x of plan) { setState(`Меняю ${n + 1} из ${plan.length}…`); await callFn('gcal', { action: 'rename', id: x.id, calendarId: x.calendarId, summary: x.title }); n++; }
-      await setMark(null); await refreshEvents(); toast('Номера занятий обновлены в Google Календаре'); onClose();
+      await setTrainMark(store, e.id, null); await refreshEvents(); toast('Номера занятий обновлены в Google Календаре'); onClose();
     } catch (err) { setState(`Остановилась: изменено ${n} из ${plan.length}. ${(err as Error).message}`); }
   };
 
@@ -157,10 +159,11 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
       {train && !plan && (
         <>
           <span className="lbl-t">Как прошло занятие</span>
-          <div className="kinds" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+          <div className="kinds" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
             {canc ? <button className="kind" type="button" aria-pressed="true">Отменили<small>не считается</small></button> : <>
-              <button className="kind" type="button" aria-pressed={link?.mark === 'went'} onClick={() => { setMark(link?.mark === 'went' ? null : 'went'); onClose(); }}>✓ Была<small>ходила</small></button>
-              <button className="kind" type="button" aria-pressed={link?.mark === 'missed'} onClick={() => { setMark(link?.mark === 'missed' ? null : 'missed'); onClose(); }}>Пропустила<small>сгорело</small></button>
+              <button className="kind" type="button" aria-pressed={mark === 'went'} onClick={() => { setMark(mark === 'went' ? null : 'went'); onClose(); }}>✓ Была<small>ходила</small></button>
+              <button className="kind" type="button" aria-pressed={mark === 'excused'} onClick={() => { setMark(mark === 'excused' ? null : 'excused'); onClose(); }}>Пропуск<small>по уважительной</small></button>
+              <button className="kind" type="button" aria-pressed={mark === 'missed'} onClick={() => { setMark(mark === 'missed' ? null : 'missed'); onClose(); }}>Пропуск<small>без уважительной</small></button>
               <button className="kind" type="button" onClick={() => prepareRenumber(true)}>Отменили<small>сдвину номера</small></button>
             </>}
           </div>

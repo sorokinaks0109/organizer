@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM, type CalEvent } from '../lib/gcal';
+import { attendanceText, setTrainMark, trainMark, type TrainMark } from '../lib/train';
 import { fmtDate, todayIso, iso, addDays } from '../lib/dates';
 import { COLORS, PROJECT_STATUS, statusOf, type Area, type Color, type Project, type ProjectStatus } from '../lib/types';
 import { Hero, Icon, Sheet, sc, useToast } from '../components/ui';
@@ -111,20 +112,84 @@ export function AreaView({ id, project, tab = 'deals' }: { id: string; project?:
 
 /** Абонемент: следующее занятие и сколько прошло. Номера берутся из названий событий («№2 из 16»). */
 function Subscription({ list }: { list: CalEvent[] }) {
-  const { event_links } = useStore();
+  const store = useStore();
   const t = todayIso();
+  const [report, setReport] = useState(false);
   const next = list.filter((e) => e.day >= t && !isCancelled(e.title) && SUB_NUM.test(e.title)).sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time))[0];
-  if (!next) return null;
-  const [, n, total] = next.title.match(SUB_NUM)!.map(Number);
-  const past = list.filter((e) => e.day < next.day && !isCancelled(e.title) && SUB_NUM.test(e.title) && Number(e.title.match(SUB_NUM)![1]) < n);
-  const mark = (e: CalEvent) => event_links.find((x) => x.event_id === e.id)?.mark;
+  const nm = next?.title.match(SUB_NUM)?.map(Number);
+  const past = list.filter((e) => e.day < t && !isCancelled(e.title));
+  const mark = (e: CalEvent) => trainMark(store, e.id);
   return (
     <div className="card" style={sc('pink')}>
       <div className="card-t">Абонемент</div>
-      <div className="kv"><span>Следующее</span><b>№{n} из {total} · {next.day === t ? 'сегодня' : next.day}{next.time ? `, ${next.time}` : ''}</b></div>
-      <div className="bar"><i style={{ width: `${Math.round(((n - 1) / total) * 100)}%` }} /></div>
-      <div className="kv"><span>Была / пропустила</span><span>{past.filter((e) => mark(e) === 'went').length} / {past.filter((e) => mark(e) === 'missed').length}</span></div>
+      {next && nm && <>
+        <div className="kv"><span>Следующее</span><b>№{nm[1]} из {nm[2]} · {next.day === t ? 'сегодня' : next.day}{next.time ? `, ${next.time}` : ''}</b></div>
+        <div className="bar"><i style={{ width: `${Math.round(((nm[1] - 1) / nm[2]) * 100)}%` }} /></div>
+      </>}
+      <div className="kv"><span>Была / пропуски</span><span>{past.filter((e) => mark(e) === 'went').length} / {past.filter((e) => mark(e) === 'excused' || mark(e) === 'missed').length}</span></div>
+      <button className="btn" type="button" style={{ alignSelf: 'flex-start' }} onClick={() => setReport(true)}>Посещения и отчёт</button>
+      {report && <AttendanceSheet list={list} onClose={() => setReport(false)} />}
     </div>
+  );
+}
+
+/** Прошедшие занятия с отметками, оплаты абонемента и текст для преподавателя одной кнопкой. */
+function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => void }) {
+  const store = useStore();
+  const toast = useToast();
+  const t = todayIso();
+  const pays = store.settings.trainPays || [];
+  const lastPay = [...pays].sort((a, b) => b.date.localeCompare(a.date))[0]?.date;
+  const [from, setFrom] = useState(lastPay || '');
+  const [pay, setPay] = useState<{ date: string; sum: string; note: string } | null>(null);
+  const uniq = [...new Map(list.map((e) => [e.id, e])).values()];
+  const past = uniq.filter((e) => e.day <= t && (!from || e.day >= from)).sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time));
+  const shownPays = pays.filter((p) => !from || p.date >= from);
+  const prefix = (list[0]?.title.match(/^(.*?)(?=\s*[:№]|\s*отмен)/i)?.[1] || 'Занятия').trim();
+  const text = attendanceText(past, (e) => trainMark(store, e.id), shownPays, prefix);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); toast('Скопировано — вставь в чат с преподавателем'); }
+    catch { toast('Не получилось скопировать — выдели текст ниже и скопируй вручную'); }
+  };
+  const savePay = async () => {
+    if (!pay?.date) return;
+    await store.saveSettings({ trainPays: [...pays, { id: crypto.randomUUID(), date: pay.date, sum: Number(pay.sum) || null, note: pay.note.trim() || undefined }] });
+    setPay(null);
+  };
+  const MARKS: [TrainMark, string][] = [['went', 'Была'], ['excused', 'Уважит.'], ['missed', 'Без уважит.']];
+  return (
+    <Sheet open onClose={onClose}>
+      <h3>Посещения</h3>
+      <label className="lbl" style={{ flex: 'none' }}>С какого числа<input className="field" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+      <span className="lbl-t">Оплаты абонемента</span>
+      {shownPays.map((p) => (
+        <div key={p.id} className="kv"><span>{fmtDate(p.date)}{p.note ? ` · ${p.note}` : ''}</span><span>{p.sum ? `${p.sum.toLocaleString('ru-RU')} ₽ ` : ''}<button type="button" className="x" aria-label="Удалить оплату" onClick={() => store.saveSettings({ trainPays: pays.filter((x) => x.id !== p.id) })}>×</button></span></div>
+      ))}
+      {pay ? (
+        <div className="row">
+          <input className="field" type="date" value={pay.date} aria-label="Дата оплаты" onChange={(e) => setPay({ ...pay, date: e.target.value })} />
+          <input className="field" inputMode="numeric" placeholder="Сумма" value={pay.sum} aria-label="Сумма" onChange={(e) => setPay({ ...pay, sum: e.target.value })} />
+          <input className="field" placeholder="Например: 12 занятий" value={pay.note} aria-label="Подпись" onChange={(e) => setPay({ ...pay, note: e.target.value })} />
+          <button className="btn primary" type="button" onClick={savePay}>Добавить</button>
+        </div>
+      ) : <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setPay({ date: t, sum: '', note: '' })}>+ оплата</button>}
+      <span className="lbl-t">Занятия</span>
+      {!past.length && <span className="mini">Прошедших занятий за этот срок нет в календаре.</span>}
+      {past.map((e) => {
+        const m = trainMark(store, e.id), canc = isCancelled(e.title), num = e.title.match(SUB_NUM)?.[1];
+        return (
+          <div key={e.id} className="pv-card" style={{ gap: 6 }}>
+            <span><b>{fmtDate(e.day)}</b>{e.time ? `, ${e.time}` : ''}{num ? ` · №${num}` : ''}</span>
+            {canc ? <span className="mini">отменено</span> : (
+              <div className="chips">{MARKS.map(([k, l]) => <button key={k} type="button" className="chip sm" aria-pressed={m === k} onClick={() => setTrainMark(store, e.id, m === k ? null : k)}>{l}</button>)}</div>
+            )}
+          </div>
+        );
+      })}
+      <span className="lbl-t">Текст для преподавателя</span>
+      <textarea className="field" rows={8} readOnly value={text} />
+      <div className="row"><button className="btn primary" type="button" onClick={copy}>Скопировать</button><button className="btn ghost" type="button" onClick={onClose}>Закрыть</button></div>
+    </Sheet>
   );
 }
 

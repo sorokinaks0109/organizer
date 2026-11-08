@@ -41,6 +41,9 @@ export type Settings = {
   /** Ежедневный чек-лист здоровья. */
   health?: HealthItem[];
   subscriptions?: { prefix: string; total: number }[];
+  /** Отметки посещений по id события и оплаты абонемента. */
+  trainMarks?: Record<string, import('./train').TrainMark>;
+  trainPays?: import('./train').TrainPay[];
 };
 
 /** Событие Google Календаря в том виде, в каком его отдаёт функция gcal. */
