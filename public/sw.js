@@ -1,6 +1,6 @@
 // Простой сервис-воркер: кэширует оболочку приложения, чтобы оно открывалось мгновенно и без сети.
 // Данные (Supabase, Google) всегда идут в сеть и не кэшируются здесь.
-const CACHE = 'organizer-v1';
+const CACHE = 'organizer-v2';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './index.html', './manifest.webmanifest', './icon.svg'])));
   self.skipWaiting();

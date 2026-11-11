@@ -6,7 +6,7 @@ import { supabase, callFn } from '../lib/supabase';
 import { createCalendarEvent } from '../lib/actions';
 import { classify, isCancelled, seriesId, SUB_NUM, type CalEvent } from '../lib/gcal';
 import { setTrainMark, trainMark, type TrainMark } from '../lib/train';
-import { addDays, cap1, MON, parseIso, plural, todayIso, WD_FULL } from '../lib/dates';
+import { addDays, cap1, iso, MON, parseIso, plural, todayIso, WD_FULL } from '../lib/dates';
 import type { FileRef, Item } from '../lib/types';
 import { Chip, Sheet, useToast } from '../components/ui';
 
@@ -145,6 +145,18 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
       setPlan(upd); setState(upd.length ? '' : 'Менять нечего, нумерация верная.');
     } catch (err) { setState((err as Error).message); }
   };
+  // Занятие отменили, но отходила его в другой день (например, во вторник вместо понедельника):
+  // событие переезжает на тот день с тем же номером и сразу отмечается «Была».
+  const [moveTo, setMoveTo] = useState<{ date: string; time: string } | null>(null);
+  const moveDay = async () => {
+    if (!moveTo?.date) return;
+    setState('Переношу занятие…');
+    try {
+      await callFn('gcal', { action: 'update', id: e.id, calendarId: e.calendarId, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, changes: { date: moveTo.date, start: moveTo.time || null } });
+      await setTrainMark(store, e.id, 'went');
+      await refreshEvents(); toast('Занятие перенесено и отмечено: была'); onClose();
+    } catch (err) { setState((err as Error).message); }
+  };
   const apply = async () => {
     if (!plan) return;
     let n = 0;
@@ -173,6 +185,18 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
             </>}
           </div>
           {canc && <button className="btn" type="button" style={{ alignSelf: 'flex-start' }} onClick={() => prepareRenumber(false)}>Вернуть занятие: всё-таки было</button>}
+          {!canc && !moveTo && <button className="btn ghost" type="button" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setMoveTo({ date: iso(addDays(parseIso(e.day), 1)), time: '19:00' })}>Ходила в другой день (отработка)</button>}
+          {moveTo && (
+            <div className="plan">
+              <b>Когда ходила вместо этого занятия</b>
+              <div className="row">
+                <input className="field" type="date" value={moveTo.date} aria-label="Дата" onChange={(x) => setMoveTo({ ...moveTo, date: x.target.value })} />
+                <input className="field" type="time" value={moveTo.time} aria-label="Время" onChange={(x) => setMoveTo({ ...moveTo, time: x.target.value })} />
+              </div>
+              <span className="mini">Номер занятия сохранится, в календаре оно переедет на этот день и будет отмечено «Была».</span>
+              <div className="row"><button className="btn primary" type="button" onClick={moveDay}>Перенести</button><button className="btn ghost" type="button" onClick={() => setMoveTo(null)}>Отмена</button></div>
+            </div>
+          )}
         </>
       )}
       {plan && plan.length > 0 && (
