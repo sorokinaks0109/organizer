@@ -45,8 +45,9 @@ export function useGoogleEvents(enabled: boolean) {
   return { events, error, connected, refresh };
 }
 
-export const isCancelled = (title: string) => /отмен/i.test(title);
 export const SUB_NUM = /№\s*(\d+)\s*из\s*(\d+)/;
+/** Отменённое занятие — «отмен» в названии и без номера: «№7 из 16 (пн отменили, отработала во вт)» — это занятие, а не отмена. */
+export const isCancelled = (title: string) => /отмен/i.test(title) && !SUB_NUM.test(title);
 
 /** К какой сфере/проекту относится событие: ручная привязка → слова проекта → слова сферы. */
 export function classify(e: { id: string; title: string }, links: EventLink[], areas: Area[], projects: Project[]): { area: string | null; project: string | null } {

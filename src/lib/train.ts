@@ -15,7 +15,8 @@ export function trainMark(store: Pick<Store, 'settings' | 'event_links'>, id: st
   if (m) return m;
   const old = store.event_links.find((x) => x.event_id === id)?.mark;
   if (old === 'went' || old === 'missed') return old;
-  // В названии события уже написано «пропуск» — считаем пропуском без уважительной, пока не отмечено иначе.
+  // В названии уже написано «отработка» — была; «пропуск» — пропуск без уважительной, пока не отмечено иначе.
+  if (/отработ/i.test(title)) return 'went';
   return /пропуск/i.test(title) ? (/уважит/i.test(title) && !/без уваж/i.test(title) ? 'excused' : 'missed') : null;
 }
 
@@ -43,7 +44,8 @@ export function attendanceText(list: CalEvent[], mark: (e: CalEvent) => TrainMar
     let st: string;
     if (isCancelled(e.title)) { st = 'отменено'; cnt.cancelled++; }
     else { const m = mark(e); if (m) { st = MARK_NAME[m]; cnt[m]++; } else { st = 'не отмечено'; cnt.open++; } }
-    lines.push(`${dd(e.day)} ${WD[d.getDay()]}${e.time ? ' ' + e.time : ''}${num ? ` (№${num})` : ''} — ${st}`);
+    const note = e.title.match(/\(([^)]*отработ[^)]*)\)/i)?.[1];
+    lines.push(`${dd(e.day)} ${WD[d.getDay()]}${e.time ? ' ' + e.time : ''}${num ? ` (№${num})` : ''} — ${st}${note ? ` (${note})` : ''}`);
   }
   lines.push('', `Итого: была ${cnt.went}` + (cnt.excused ? `, по уважительной ${cnt.excused}` : '') + (cnt.missed ? `, без уважительной ${cnt.missed}` : '') + (cnt.cancelled ? `, отменено ${cnt.cancelled}` : '') + (cnt.open ? `, не отмечено ${cnt.open}` : '') + '.');
   return lines.join('\n');

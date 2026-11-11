@@ -161,7 +161,14 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
     if (!plan) return;
     let n = 0;
     try {
-      for (const x of plan) { setState(`Меняю ${n + 1} из ${plan.length}…`); await callFn('gcal', { action: 'rename', id: x.id, calendarId: x.calendarId, summary: x.title }); n++; }
+      // Google ограничивает частоту правок: при отказе ждём и пробуем ещё раз, иначе часть номеров не поменяется.
+      const rename = (x: { id: string; calendarId: string; title: string }) => callFn('gcal', { action: 'rename', id: x.id, calendarId: x.calendarId, summary: x.title });
+      for (const x of plan) {
+        setState(`Меняю ${n + 1} из ${plan.length}…`);
+        try { await rename(x); } catch { await new Promise((r) => setTimeout(r, 2000)); await rename(x); }
+        n++;
+        await new Promise((r) => setTimeout(r, 250));
+      }
       await setTrainMark(store, e.id, null); await refreshEvents(); toast('Номера занятий обновлены в Google Календаре'); onClose();
     } catch (err) { setState(`Остановилась: изменено ${n} из ${plan.length}. ${(err as Error).message}`); }
   };
