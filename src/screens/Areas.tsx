@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useApp } from '../lib/context';
 import { classify, isCancelled, SUB_NUM, type CalEvent } from '../lib/gcal';
-import { attendanceText, setTrainMark, trainMark, type TrainMark } from '../lib/train';
+import { attendanceText, makeupNote, setTrainMark, trainMark, type TrainMark } from '../lib/train';
 import { fmtDate, todayIso, iso, addDays } from '../lib/dates';
 import { COLORS, PROJECT_STATUS, statusOf, type Area, type Color, type Project, type ProjectStatus } from '../lib/types';
 import { Hero, Icon, Sheet, sc, useToast } from '../components/ui';
@@ -183,6 +183,7 @@ function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => v
         return (
           <div key={e.id} className="pv-card" style={{ gap: 6 }}>
             <span><b>{fmtDate(e.day)}</b>{e.time ? `, ${e.time}` : ''}{num ? ` · №${num}` : ''}</span>
+            {makeupNote(e.title) && <span className="mini">{makeupNote(e.title)}</span>}
             {canc ? <span className="mini">отменено</span> : (
               <div className="chips">{MARKS.map(([k, l]) => <button key={k} type="button" className="chip sm" aria-pressed={m === k} onClick={() => setTrainMark(store, e.id, m === k ? null : k)}>{l}</button>)}</div>
             )}

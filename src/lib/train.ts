@@ -28,6 +28,14 @@ export async function setTrainMark(store: Store, id: string, mark: TrainMark | n
   if (store.event_links.some((x) => x.event_id === id && x.mark)) await store.update('event_links', { event_id: id }, { mark: null });
 }
 
+/** «(отменил преподаватель, отработка во вт 10.11)» → «отменил преподаватель; отработка во вт 10.11». */
+export function makeupNote(title: string): string | null {
+  const n = title.match(/\(([^)]*отработ[^)]*)\)/i)?.[1];
+  if (!n) return null;
+  const s = n.replace(/,\s*(?=отработ)/i, '; ');
+  return /отмен/i.test(s) ? s : `отменили; ${s}`;
+}
+
 const dd = (d: string) => { const x = parseIso(d); return `${String(x.getDate()).padStart(2, '0')}.${String(x.getMonth() + 1).padStart(2, '0')}`; };
 
 /** Текст для преподавателя: оплаты, каждое занятие со статусом, итог. */
@@ -44,8 +52,10 @@ export function attendanceText(list: CalEvent[], mark: (e: CalEvent) => TrainMar
     let st: string;
     if (isCancelled(e.title)) { st = 'отменено'; cnt.cancelled++; }
     else { const m = mark(e); if (m) { st = MARK_NAME[m]; cnt[m]++; } else { st = 'не отмечено'; cnt.open++; } }
-    const note = e.title.match(/\(([^)]*отработ[^)]*)\)/i)?.[1];
-    lines.push(`${dd(e.day)} ${WD[d.getDay()]}${e.time ? ' ' + e.time : ''}${num ? ` (№${num})` : ''} — ${st}${note ? ` (${note})` : ''}`);
+    const when = `${dd(e.day)} ${WD[d.getDay()]}${e.time ? ' ' + e.time : ''}`;
+    const note = makeupNote(e.title);
+    // Отработка: сначала — что занятие отменили, потом — когда отработала и что была.
+    lines.push(note ? `${when} — ${note}${num ? ` (№${num})` : ''} — ${st}` : `${when}${num ? ` (№${num})` : ''} — ${st}`);
   }
   lines.push('', `Итого: была ${cnt.went}` + (cnt.excused ? `, по уважительной ${cnt.excused}` : '') + (cnt.missed ? `, без уважительной ${cnt.missed}` : '') + (cnt.cancelled ? `, отменено ${cnt.cancelled}` : '') + (cnt.open ? `, не отмечено ${cnt.open}` : '') + '.');
   return lines.join('\n');

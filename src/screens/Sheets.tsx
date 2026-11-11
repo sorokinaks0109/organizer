@@ -152,7 +152,9 @@ export function EventSheet({ e, onClose }: { e: CalEvent; onClose: () => void })
     if (!moveTo?.date) return;
     setState('Переношу занятие…');
     try {
-      await callFn('gcal', { action: 'update', id: e.id, calendarId: e.calendarId, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, changes: { date: moveTo.date, start: moveTo.time || null } });
+      const md = (s: string) => { const x = parseIso(s); return `${String(x.getDate()).padStart(2, '0')}.${String(x.getMonth() + 1).padStart(2, '0')}`; };
+      const title = /отработ/i.test(e.title) ? e.title : `${e.title} (отменили ${md(e.day)}, отработка ${md(moveTo.date)})`;
+      await callFn('gcal', { action: 'update', id: e.id, calendarId: e.calendarId, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, changes: { title, date: moveTo.date, start: moveTo.time || null } });
       await setTrainMark(store, e.id, 'went');
       await refreshEvents(); toast('Занятие перенесено и отмечено: была'); onClose();
     } catch (err) { setState((err as Error).message); }

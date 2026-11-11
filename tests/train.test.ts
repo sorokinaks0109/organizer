@@ -26,9 +26,9 @@ describe('отработка', () => {
     const { isCancelled } = await import('../src/lib/gcal');
     expect(isCancelled('Балет: тренировка отменена')).toBe(true);
     expect(isCancelled('Балет: тренировка №7 из 16 (пн отменили, отработала во вт 10.11)')).toBe(false);
-    const t = 'Балет: тренировка №7 из 16 (отработка во вт 10.11)';
+    const t = 'Балет: тренировка №7 из 16 (отменил преподаватель, отработка во вт 10.11)';
     expect(trainMark({ settings: {}, event_links: [] } as never, 'z', t)).toBe('went');
     const text = attendanceText([ev('z', '2026-11-09', t)], (e) => trainMark({ settings: {}, event_links: [] } as never, e.id, e.title), [], 'Балет');
-    expect(text).toContain('09.11 пн 13:00 (№7) — была (отработка во вт 10.11)');
+    expect(text).toContain('09.11 пн 13:00 — отменил преподаватель; отработка во вт 10.11 (№7) — была');
   });
 });
