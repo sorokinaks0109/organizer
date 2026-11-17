@@ -136,6 +136,7 @@ function Subscription({ list }: { list: CalEvent[] }) {
 /** Прошедшие занятия с отметками, оплаты абонемента и текст для преподавателя одной кнопкой. */
 function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => void }) {
   const store = useStore();
+  const { openEvent } = useApp();
   const toast = useToast();
   const t = todayIso();
   const pays = store.settings.trainPays || [];
@@ -185,7 +186,11 @@ function AttendanceSheet({ list, onClose }: { list: CalEvent[]; onClose: () => v
             <span><b>{fmtDate(e.day)}</b>{e.time ? `, ${e.time}` : ''}{num ? ` · №${num}` : ''}</span>
             {makeupNote(e.title) && <span className="mini">{makeupNote(e.title)}</span>}
             {canc ? <span className="mini">отменено</span> : (
-              <div className="chips">{MARKS.map(([k, l]) => <button key={k} type="button" className="chip sm" aria-pressed={m === k} onClick={() => setTrainMark(store, e.id, m === k ? null : k)}>{l}</button>)}</div>
+              <div className="chips">
+                {MARKS.map(([k, l]) => <button key={k} type="button" className="chip sm" aria-pressed={m === k} onClick={() => setTrainMark(store, e.id, m === k ? null : k)}>{l}</button>)}
+                {/* Отмену и отработку делаем в карточке занятия: там сдвигаются номера и переносится день. */}
+                <button type="button" className="chip sm" onClick={() => { onClose(); openEvent(e); }}>Отменили / отработка…</button>
+              </div>
             )}
           </div>
         );
