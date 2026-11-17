@@ -5,6 +5,7 @@ import { todayIso } from './dates';
 import { bounds, incomeRef, monthFrom, PAY, planRef, summarize, TRANSFER, type PayKey, type Period } from './money';
 import { avansForecast, DEFAULT_PAYROLL, payDay, payrollReady, vacationPayments, zpForecast, type Forecast } from './payroll';
 import type { Expense, Income, MoneyMonth, PlanRow, Wish } from './types';
+import { debtPaid, principalOf } from './debts';
 
 type Store = ReturnType<typeof useStore>;
 
@@ -28,12 +29,17 @@ export async function saveMonth(store: Store, ym: string, mut: (m: MoneyMonth) =
 /** Отметить платёж оплаченным (sum — если пришло не столько, сколько в плане). */
 export async function payRow(store: Store, p: Period, row: PlanRow, sum = row.sum) {
   const day = todayIso();
-  await saveMonth(store, p.ym, (m) => { m.plan[p.key] = (m.plan[p.key] || []).map((r) => (r.id === row.id ? { ...r, paid: true, paid_sum: sum, paid_on: day } : r)); });
+  // Платёж по долгу: остаток долга уменьшается на часть платежа без процентов.
+  const debt = row.debt ? (store.settings.debts || []).find((d) => d.id === row.debt) : undefined;
+  const principal = debt ? principalOf(debt, sum) : 0;
+  await saveMonth(store, p.ym, (m) => { m.plan[p.key] = (m.plan[p.key] || []).map((r) => (r.id === row.id ? { ...r, paid: true, paid_sum: sum, paid_on: day, ...(debt ? { debt_principal: principal } : {}) } : r)); });
+  if (debt) await debtPaid(store, debt.id, principal, 1);
   await store.insert('expenses', { what: row.name, amount: sum, category: row.cat, wb: false, spent_on: day, kind: 'payment', plan_ref: planRef(p, row.id), from_reserve: !!row.reserve });
 }
 
 export async function unpayRow(store: Store, p: Period, row: PlanRow) {
-  await saveMonth(store, p.ym, (m) => { m.plan[p.key] = (m.plan[p.key] || []).map((r) => (r.id === row.id ? { id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false, reserve: r.reserve, once: r.once } : r)); });
+  await saveMonth(store, p.ym, (m) => { m.plan[p.key] = (m.plan[p.key] || []).map((r) => (r.id === row.id ? { id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false, reserve: r.reserve, once: r.once, ...(r.debt ? { debt: r.debt } : {}) } : r)); });
+  if (row.debt && row.debt_principal) await debtPaid(store, row.debt, row.debt_principal, -1);
   await store.remove('expenses', { plan_ref: planRef(p, row.id) });
 }
 
@@ -205,6 +211,8 @@ export async function deleteExpense(store: Store, e: Expense) {
   }
   if (e.kind === 'payment' && e.plan_ref) {
     const [ym, key, rowId] = e.plan_ref.split(':') as [string, PayKey, string];
-    await saveMonth(store, ym, (m) => { m.plan[key] = (m.plan[key] || []).map((r) => (r.id === rowId ? { id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false, reserve: r.reserve, once: r.once } : r)); });
+    const was = monthOrNew(store, ym).plan[key]?.find((r) => r.id === rowId);
+    await saveMonth(store, ym, (m) => { m.plan[key] = (m.plan[key] || []).map((r) => (r.id === rowId ? { id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false, reserve: r.reserve, once: r.once, ...(r.debt ? { debt: r.debt } : {}) } : r)); });
+    if (was?.debt && was.debt_principal) await debtPaid(store, was.debt, was.debt_principal, -1);
   }
 }

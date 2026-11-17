@@ -193,6 +193,11 @@ function PlanTab() {
         <b>{money(reserve.balance)}</b>
         <small>отложить или взять на жизнь ›</small>
       </button>
+      <button className="resv" type="button" onClick={() => go({ name: 'debts' })}>
+        <small>Долги и кредиты</small>
+        <b>{money((store.settings.debts || []).filter((d) => !d.closed).reduce((x, d) => x + d.balance, 0))}</b>
+        <small>остаток, график погашения, платежи в план ›</small>
+      </button>
       <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', paddingInline: 0 }} onClick={() => setBack(back + 1)}>‹ {back ? 'Ещё раньше' : 'Показать текущую и прошлые выплаты'}</button>
       {periods.map((q) => <PlanCard key={q.ym + q.key} q={q} onSheet={(what) => setSheet({ p: q, what })} onVacation={setIncome} />)}
       {sheet?.what === 'payout' && <PayoutSheet p={sheet.p} onClose={() => setSheet(null)} />}

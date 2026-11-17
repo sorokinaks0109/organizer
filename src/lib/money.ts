@@ -87,7 +87,7 @@ export function reserveState(months: MoneyMonth[], incomes: Income[]) {
 export function monthFrom(prev: MoneyMonth | null | undefined, ym: string): MoneyMonth {
   // id строк сохраняются: иначе будущий месяц, который ещё не записан в базу, при каждом показе получал бы новые id,
   // и правка или удаление строки не находили бы её.
-  const copy = (rows?: PlanRow[]) => (rows || []).filter((r) => !r.once).map((r) => ({ id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false }));
+  const copy = (rows?: PlanRow[]) => (rows || []).filter((r) => !r.once).map((r) => ({ id: r.id, name: r.name, sum: r.sum, cat: r.cat, paid: false, ...(r.debt ? { debt: r.debt } : {}) }));
   return { ym, income: {}, got: {}, plan: { avans: copy(prev?.plan.avans), zp: copy(prev?.plan.zp) } };
 }
 

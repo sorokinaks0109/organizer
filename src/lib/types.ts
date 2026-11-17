@@ -16,7 +16,7 @@ export type Item = {
 export type EventLink = { event_id: string; area_id: string | null; project_id: string | null; mark: 'went' | 'missed' | null };
 export type Person = { id: string; name: string; email: string | null; color: Color; sort: number };
 /** Строка плана платежей. reserve — оплачивается из резерва (отпускных и т.п.), а не из этой выплаты. once — разовый, в следующий период не переносится. */
-export type PlanRow = { id: string; name: string; sum: number; cat: string; paid: boolean; paid_sum?: number; paid_on?: string; reserve?: boolean; once?: boolean };
+export type PlanRow = { id: string; name: string; sum: number; cat: string; paid: boolean; paid_sum?: number; paid_on?: string; reserve?: boolean; once?: boolean; debt?: string; debt_principal?: number };
 /** income.fixed — сумму выплаты ввели руками; иначе она считается по зарплатным настройкам. */
 export type MoneyMonth = { ym: string; income: { avans?: number; zp?: number; fixed?: { avans?: boolean; zp?: boolean } }; got: { avans?: boolean; zp?: boolean }; plan: { avans?: PlanRow[]; zp?: PlanRow[]; other?: PlanRow[] } };
 /** kind: spend — повседневная трата, payment — оплаченный платёж из плана, saving — отложено в копилку. */
@@ -44,6 +44,8 @@ export type Settings = {
   /** Отметки посещений по id события и оплаты абонемента. */
   trainMarks?: Record<string, import('./train').TrainMark>;
   trainPays?: import('./train').TrainPay[];
+  /** Долги и кредиты с графиком погашения. */
+  debts?: import('./debts').Debt[];
 };
 
 /** Событие Google Календаря в том виде, в каком его отдаёт функция gcal. */

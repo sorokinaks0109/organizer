@@ -15,7 +15,7 @@ export type AppCtx = {
 };
 export type View =
   | { name: 'today' } | { name: 'areas' } | { name: 'area'; id: string; project?: string | null; tab?: 'deals' | 'notes' }
-  | { name: 'money' } | { name: 'reserve' } | { name: 'stats' }
+  | { name: 'money' } | { name: 'reserve' } | { name: 'stats' } | { name: 'debts' }
   | { name: 'wishes' } | { name: 'settings' };
 
 export const App = createContext<AppCtx | null>(null);
