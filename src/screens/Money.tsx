@@ -6,6 +6,7 @@ import { addDays, cap1, iso, MON, MON_N, MON_SHORT, money, parseIso, plural, tod
 import { bounds, nextPeriod, PAY, periodOf, prevPeriod, reserveState, rowCost, samePeriod, SAVING_CATS, TRANSFER, type PayKey, type Period } from '../lib/money';
 import { vacationPayments } from '../lib/payroll';
 import { addIncome, confirmPayout, deleteExpense, deleteIncome, deleteRow, monthOrNew, undoTransfer, moveRow, payoutFor, payRow, reserveIn, reserveOut, resetExpected, saveRow, saveRowForward, setExpected, summaryFor, unconfirmPayout, unpayRow } from '../lib/moneyActions';
+import { payYmOf, setDebtAmount } from '../lib/debts';
 import { DEFAULT_PLAN_CATS, DEFAULT_SPEND_CATS, INCOME_SOURCES, type Expense, type Income, type PlanRow } from '../lib/types';
 import { CHECK, Hero, Icon, Sheet, useToast } from '../components/ui';
 
@@ -373,7 +374,9 @@ export function RowSheet({ p, row, onClose, note }: { p: Period; row: PlanRow | 
     const next: PlanRow = { ...(row || { id: crypto.randomUUID(), paid: false }), name: name.trim(), sum: num(sum), cat, once };
     if (!next.paid) delete next.reserve;
     if (next.paid) next.paid_sum = num(paidSum) || next.sum;
-    if (forward && !once) await saveRowForward(store, p, next); else await saveRow(store, p, next);
+    // Платёж по долгу: сумма меняется только в этом месяце, и график долга её учитывает.
+    if (row?.debt) { await saveRow(store, p, next); if (next.sum !== row.sum) await setDebtAmount(store, row.debt, payYmOf(p.ym, p.key), next.sum); }
+    else if (forward && !once) await saveRowForward(store, p, next); else await saveRow(store, p, next);
     onClose();
   };
   return (
@@ -386,7 +389,8 @@ export function RowSheet({ p, row, onClose, note }: { p: Period; row: PlanRow | 
       </div>
       <label className="lbl" style={{ flex: 'none' }}>Категория<select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>{cats.map((c) => <option key={c}>{c}</option>)}</select></label>
       <label className="toggle-row"><input type="checkbox" className="check" checked={once} onChange={(e) => setOnce(e.target.checked)} /><span>Разовый<br /><small className="mini">в следующий месяц не переносится</small></span></label>
-      {!once && <label className="toggle-row"><input type="checkbox" className="check" checked={forward} onChange={(e) => setForward(e.target.checked)} /><span>И в следующих месяцах<br /><small className="mini">{note || 'постоянный платёж: новая сумма и название — дальше тоже'}</small></span></label>}
+      {row?.debt && <span className="mini">Платёж по долгу: сумма поменяется только в этом месяце, график долга пересчитается.</span>}
+      {!once && !row?.debt && <label className="toggle-row"><input type="checkbox" className="check" checked={forward} onChange={(e) => setForward(e.target.checked)} /><span>И в следующих месяцах<br /><small className="mini">{note || 'постоянный платёж: новая сумма и название — дальше тоже'}</small></span></label>}
       <div className="row">
         <button className="btn primary" type="button" disabled={!ok || busy} onClick={save}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
         <span style={{ flex: 1 }} />

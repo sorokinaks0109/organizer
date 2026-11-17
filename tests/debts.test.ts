@@ -17,3 +17,13 @@ describe('долги', () => {
     expect(schedule({ balance: 100000, payment: 1000, rate: 24 }, '2026-11')).toEqual([]);
   });
 });
+
+describe('долги: месяцы и свои суммы', () => {
+  it('свой платёж в отдельный месяц меняет график', async () => {
+    const { schedule, planYmOf } = await import('../src/lib/debts');
+    const s = schedule({ balance: 30000, payment: 10000, rate: null, amounts: { '2027-01': 5000 } }, '2026-12');
+    expect(s.map((r) => [r.ym, r.payment])).toEqual([['2026-12', 10000], ['2027-01', 5000], ['2027-02', 10000], ['2027-03', 5000]]);
+    expect(planYmOf('2026-12', 'zp')).toBe('2026-11'); // зарплата 11 декабря — это расчёт за ноябрь
+    expect(planYmOf('2026-12', 'avans')).toBe('2026-12');
+  });
+});

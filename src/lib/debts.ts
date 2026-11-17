@@ -14,6 +14,8 @@ export type Debt = {
   payment: number;          // платёж в месяц
   rate?: number | null;     // ставка, % годовых (если есть) — для графика
   key: PayKey;              // с какой выплаты платится
+  firstYm?: string;         // месяц первого платежа (календарный, когда деньги уходят)
+  amounts?: Record<string, number>; // свой платёж в отдельные месяцы (ключ — месяц платежа)
   inPlan?: boolean;         // вписан в предстоящие платежи
   closed?: boolean;
   note?: string;
@@ -29,49 +31,76 @@ export function principalOf(d: Pick<Debt, 'balance' | 'rate'>, paid: number) {
   return Math.max(0, r2(paid - interest));
 }
 
-/** График: помесячно, пока остаток не станет нулём (не больше 20 лет). Первый месяц — fromYm. */
-export function schedule(d: Pick<Debt, 'balance' | 'payment' | 'rate'>, fromYm: string): DebtRow[] {
+/** Месяц плана, из которого платится платёж месяца payYm: аванс 28-го — тот же месяц, зарплата 13-го — за прошлый. */
+export const planYmOf = (payYm: string, key: PayKey) => (key === 'zp' ? ymShift(payYm, -1) : payYm);
+export const payYmOf = (planYm: string, key: PayKey) => (key === 'zp' ? ymShift(planYm, 1) : planYm);
+
+/** График по месяцам платежа, пока остаток не станет нулём (не больше 20 лет). Первый месяц — fromYm. */
+export function schedule(d: Pick<Debt, 'balance' | 'payment' | 'rate' | 'amounts'>, fromYm: string): DebtRow[] {
   const out: DebtRow[] = [];
   let left = d.balance;
   for (let i = 0; left > 0.009 && i < 240; i++) {
+    const ym = ymShift(fromYm, i);
     const interest = d.rate ? r2(left * d.rate / 1200) : 0;
-    if (d.payment <= interest) break; // платёж не покрывает проценты — долг не гасится
-    const payment = Math.min(d.payment, r2(left + interest));
+    const want = d.amounts?.[ym] ?? d.payment;
+    if (want <= interest && !d.amounts?.[ym]) break; // платёж не покрывает проценты — долг не гасится
+    const payment = Math.max(0, Math.min(want, r2(left + interest)));
     const principal = r2(payment - interest);
     left = Math.max(0, r2(left - principal));
-    out.push({ ym: ymShift(fromYm, i), payment, interest, principal, left });
+    out.push({ ym, payment, interest, principal, left });
   }
   return out;
 }
 
-/** С какого месяца считать график: если платёж этого месяца уже оплачен — со следующего. */
-export function scheduleStart(store: Pick<Store, 'money_months'>, d: Debt) {
-  const ym = periodOf(todayIso()).ym;
-  const row = (monthOrNew(store, ym).plan[d.key] || []).find((r) => r.id === debtRowId(d));
-  return row?.paid ? ymShift(ym, 1) : ym;
+/** С какого месяца платежа считать график: не раньше первого платежа и текущего месяца;
+ *  если платёж этого месяца уже оплачен — со следующего. */
+export function scheduleStart(store: Pick<Store, 'money_months'>, d: Pick<Debt, 'id' | 'key' | 'firstYm'>) {
+  const now = todayIso().slice(0, 7);
+  if (d.firstYm && d.firstYm > now) return d.firstYm;
+  const row = (monthOrNew(store, planYmOf(now, d.key)).plan[d.key] || []).find((r) => r.id === debtRowId(d));
+  return row?.paid ? ymShift(now, 1) : now;
 }
 
 async function saveDebts(store: Store, debts: Debt[]) { await store.saveSettings({ debts }); }
 
-/** Строка платежа долга в этом и всех уже созданных следующих месяцах (новые месяцы возьмут её сами). */
+/** Строки долга — ровно в месяцах графика, со своей суммой в каждом; в остальных будущих месяцах строки нет.
+ *  (Новые месяцы строки долга не копируют — их ставит только график.) */
 async function putInPlan(store: Store, d: Debt) {
   const start = scheduleStart(store, d);
-  const row: PlanRow = { id: debtRowId(d), name: d.name, sum: d.payment, cat: 'Кредиты', paid: false, debt: d.id };
-  const months = [start, ...store.snapshot().money_months.map((m) => m.ym).filter((ym) => ym > start)];
-  for (const ym of [...new Set(months)]) {
+  const rows = new Map(schedule(d, start).map((r) => [planYmOf(r.ym, d.key), r.payment]));
+  // Текущие и будущие месяцы до первого платежа — без строки долга (если она туда попала раньше).
+  const cur = periodOf(todayIso()).ym;
+  const months = [...new Set([...rows.keys(), ...store.snapshot().money_months.map((m) => m.ym).filter((ym) => ym >= cur)])].sort();
+  const id = debtRowId(d);
+  for (const ym of months) {
+    const sum = rows.get(ym);
+    const has = (['avans', 'zp'] as PayKey[]).some((k) => (monthOrNew(store.snapshot(), ym).plan[k] || []).some((r) => r.id === id));
+    if (sum === undefined && !has) continue;
     await saveMonth(store, ym, (m) => {
-      for (const k of ['avans', 'zp'] as PayKey[]) if (k !== d.key) m.plan[k] = (m.plan[k] || []).filter((r) => r.id !== row.id || r.paid);
+      for (const k of ['avans', 'zp'] as PayKey[]) if (k !== d.key || sum === undefined) m.plan[k] = (m.plan[k] || []).filter((r) => r.id !== id || r.paid);
+      if (sum === undefined) return;
       const list = m.plan[d.key] || [];
-      const cur = list.find((r) => r.id === row.id);
-      m.plan[d.key] = cur ? list.map((r) => (r.id === row.id && !r.paid ? { ...r, name: d.name, sum: d.payment, debt: d.id } : r)) : [...list, row];
+      const cur = list.find((r) => r.id === id);
+      if (cur?.paid) return;
+      const row: PlanRow = { id, name: d.name, sum, cat: 'Кредиты', paid: false, debt: d.id };
+      m.plan[d.key] = cur ? list.map((r) => (r.id === id ? { ...r, name: d.name, sum } : r)) : [...list, row];
     });
   }
+}
+
+/** Сумма платежа в отдельный месяц (из графика или из строки плана). Совпадает с обычной — особая сумма убирается. */
+export async function setDebtAmount(store: Store, debtId: string, payYm: string, sum: number) {
+  const d = (store.settings.debts || []).find((x) => x.id === debtId);
+  if (!d) return;
+  const amounts = { ...d.amounts };
+  if (sum === d.payment) delete amounts[payYm]; else amounts[payYm] = sum;
+  await saveDebt(store, { ...d, amounts });
 }
 
 /** Убрать неоплаченные строки долга из этого и следующих месяцев. */
 async function dropFromPlan(store: Store, d: Debt) {
   const ym = periodOf(todayIso()).ym;
-  for (const m of store.snapshot().money_months.filter((x) => x.ym >= ym)) {
+  for (const m of store.snapshot().money_months.filter((x) => x.ym >= ym && x.ym >= ymShift(ym, -1))) {
     if (!(['avans', 'zp'] as PayKey[]).some((k) => (m.plan[k] || []).some((r) => r.id === debtRowId(d) && !r.paid))) continue;
     await saveMonth(store, m.ym, (x) => { for (const k of ['avans', 'zp'] as PayKey[]) x.plan[k] = (x.plan[k] || []).filter((r) => r.id !== debtRowId(d) || r.paid); });
   }
